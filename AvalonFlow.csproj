@@ -12,10 +12,19 @@
     <RepositoryType>git</RepositoryType>
     <Description>AvalonFlowQueueService is a generic queue service for managing and executing asynchronous tasks in sequential order per unique key. Ideal for processing workflows such as user actions, device events, transactions, or any scenario that requires task queuing with timeouts and cancellation.</Description>
     <PackageIcon>AvalonFlow.jpg</PackageIcon>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>flow, .net</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>
     <None Include="..\..\..\Desktop\AvalonFlow.jpg">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="README.md">
       <Pack>True</Pack>
       <PackagePath>\</PackagePath>
     </None>
