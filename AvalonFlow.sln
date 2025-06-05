@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.13.35913.81 d17.13
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AvalonFlow", "AvalonFlow.csproj", "{9EE4ED5F-7E89-4EBF-8010-FF672FFEC480}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AvalonFlowConsole", "..\AvalonFlowConsole\AvalonFlowConsole.csproj", "{8B0DAE90-8F52-4EC3-9A0E-2F3D72889AA0}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{9EE4ED5F-7E89-4EBF-8010-FF672FFEC480}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9EE4ED5F-7E89-4EBF-8010-FF672FFEC480}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9EE4ED5F-7E89-4EBF-8010-FF672FFEC480}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9EE4ED5F-7E89-4EBF-8010-FF672FFEC480}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8B0DAE90-8F52-4EC3-9A0E-2F3D72889AA0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8B0DAE90-8F52-4EC3-9A0E-2F3D72889AA0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8B0DAE90-8F52-4EC3-9A0E-2F3D72889AA0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8B0DAE90-8F52-4EC3-9A0E-2F3D72889AA0}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {A8D062B4-9B4C-4817-BB2F-F094CF1D80C8}
+	EndGlobalSection
+EndGlobal
