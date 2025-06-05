@@ -30,4 +30,9 @@
     </None>
   </ItemGroup>
 
+	<ItemGroup>
+		<PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.12.0" />
+	</ItemGroup>
+
+	
 </Project>

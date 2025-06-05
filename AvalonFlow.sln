@@ -7,6 +7,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AvalonFlow", "AvalonFlow.cs
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AvalonFlowConsole", "..\AvalonFlowConsole\AvalonFlowConsole.csproj", "{8B0DAE90-8F52-4EC3-9A0E-2F3D72889AA0}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SocketFlowConsole", "..\SocketFlowConsole\SocketFlowConsole.csproj", "{3DA573CE-638D-4BCA-89DA-EA332E2330DC}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -21,6 +23,10 @@ Global
 		{8B0DAE90-8F52-4EC3-9A0E-2F3D72889AA0}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{8B0DAE90-8F52-4EC3-9A0E-2F3D72889AA0}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{8B0DAE90-8F52-4EC3-9A0E-2F3D72889AA0}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3DA573CE-638D-4BCA-89DA-EA332E2330DC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3DA573CE-638D-4BCA-89DA-EA332E2330DC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3DA573CE-638D-4BCA-89DA-EA332E2330DC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3DA573CE-638D-4BCA-89DA-EA332E2330DC}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
