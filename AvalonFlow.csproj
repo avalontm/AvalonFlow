@@ -7,6 +7,18 @@
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
     <Title>AvalonFlow</Title>
     <Copyright>AvalonTM</Copyright>
+    <PackageProjectUrl>https://github.com/avalontm/AvalonFlow</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/avalontm/AvalonFlow</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <Description>AvalonFlowQueueService is a generic queue service for managing and executing asynchronous tasks in sequential order per unique key. Ideal for processing workflows such as user actions, device events, transactions, or any scenario that requires task queuing with timeouts and cancellation.</Description>
+    <PackageIcon>AvalonFlow.jpg</PackageIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\..\Desktop\AvalonFlow.jpg">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
+  </ItemGroup>
 
 </Project>
