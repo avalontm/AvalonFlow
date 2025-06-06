@@ -6,19 +6,17 @@ using System.Threading.Tasks;
 
 namespace AvalonFlow.Rest
 {
-    [AttributeUsage(AttributeTargets.Method | AttributeTargets.Class, AllowMultiple = true)]
+    [AttributeUsage(AttributeTargets.Method | AttributeTargets.Class, AllowMultiple = false)]
     public class AuthorizeAttribute : Attribute
     {
-        public string? AuthenticationScheme { get; set; }
+        public string? Roles { get; set; }
+        public string? AuthenticationScheme { get; set; } = "Bearer";
 
-        public AuthorizeAttribute()
-        {
-            AuthenticationScheme = "Bearer";
-        }
+        public AuthorizeAttribute() { }
 
-        public AuthorizeAttribute(string scheme)
+        public AuthorizeAttribute(string roles)
         {
-            AuthenticationScheme = scheme;
+            Roles = roles;
         }
     }
 }
