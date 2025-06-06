@@ -1,0 +1,14 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace AvalonFlow.Rest
+{
+    [AttributeUsage(AttributeTargets.Method)]
+    public class HttpHeadAttribute : AvalonRestAttribute
+    {
+        public HttpHeadAttribute(string path = "/") : base(AvalonHttpMethod.HEAD, path) { }
+    }
+}

@@ -12,7 +12,10 @@ namespace AvalonFlow.Rest
         POST,
         PUT,
         DELETE,
-        PATCH
+        PATCH,
+        OPTIONS,
+        HEAD
     }
+
 }
 

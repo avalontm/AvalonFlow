@@ -10,6 +10,17 @@
         protected ActionResult InternalServerError(string message = "Internal Server Error") => new(500, new { error = message });
         protected ActionResult Unauthorized(string message = "Unauthorized") => new(401, new { error = message });
 
+        protected FileActionResult File(Stream fileStream, string contentType, string fileName)
+        {
+            if (fileStream.CanSeek)
+                fileStream.Position = 0;
+
+            using var ms = new MemoryStream();
+            fileStream.CopyTo(ms);
+            var bytes = ms.ToArray();
+
+            return new FileActionResult(bytes, contentType, fileName);
+        }
     }
 
 }

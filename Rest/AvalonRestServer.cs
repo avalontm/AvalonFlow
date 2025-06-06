@@ -195,7 +195,7 @@ namespace AvalonFlow.Rest
                     }
 
                     string token = authHeader["Bearer ".Length..].Trim();
-                    userPrincipal = ValidateJwtToken(token);
+                    userPrincipal = AvalonFlowInstance.ValidateJwtToken(token);
                     if (userPrincipal == null)
                     {
                         await RespondWith(context, 401, new { error = "Unauthorized: Invalid token" });
@@ -238,7 +238,8 @@ namespace AvalonFlow.Rest
 
                 if (result is ActionResult actionResult)
                 {
-                    await RespondWith(context, actionResult.StatusCode, actionResult.Value);
+                    // Pasar el ActionResult completo para detectar FileActionResult
+                    await RespondWith(context, actionResult.StatusCode, actionResult);
                 }
                 else
                 {
@@ -247,7 +248,7 @@ namespace AvalonFlow.Rest
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error: {ex}");
+                AvalonFlowInstance.Log($"Error: {ex}");
                 await RespondWith(context, 500, new { error = "Internal server error" });
             }
         }
@@ -312,35 +313,49 @@ namespace AvalonFlow.Rest
         private async Task RespondWith(HttpListenerContext context, int statusCode, object value)
         {
             context.Response.StatusCode = statusCode;
-            context.Response.ContentType = "application/json";
-
-            var responseJson = JsonSerializer.Serialize(value);
-            var buffer = Encoding.UTF8.GetBytes(responseJson);
-            await context.Response.OutputStream.WriteAsync(buffer);
-            context.Response.Close();
-        }
-
-        private ClaimsPrincipal? ValidateJwtToken(string token)
-        {
-            var tokenHandler = new JwtSecurityTokenHandler();
-            var key = Encoding.ASCII.GetBytes(AvalonFlowInstance.JwtSecretKey);
 
             try
             {
-                var principal = tokenHandler.ValidateToken(token, new TokenValidationParameters
+                if (value is FileActionResult file)
                 {
-                    ValidateIssuerSigningKey = true,
-                    IssuerSigningKey = new SymmetricSecurityKey(key),
-                    ValidateIssuer = false,
-                    ValidateAudience = false,
-                    ClockSkew = TimeSpan.Zero
-                }, out SecurityToken validatedToken);
+                    context.Response.ContentType = file.ContentType ?? "application/octet-stream";
+                    context.Response.AddHeader("Content-Disposition", $"attachment; filename=\"{file.FileName}\"");
+                    await context.Response.OutputStream.WriteAsync(file.Content, 0, file.Content.Length);
+                }
+                else if (value is StreamFileActionResult streamfile)
+                {
+                    context.Response.ContentType = streamfile.ContentType;
 
-                return principal;
+                    if (!string.IsNullOrEmpty(streamfile.FileName))
+                    {
+                        var dispositionType = streamfile.IsAttachment ? "attachment" : "inline";
+                        context.Response.AddHeader("Content-Disposition", $"{dispositionType}; filename=\"{streamfile.FileName}\"");
+                    }
+
+                    byte[] buffer = new byte[81920]; // 80 KB buffer
+                    int bytesRead;
+                    while ((bytesRead = await streamfile.ContentStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                    {
+                        await context.Response.OutputStream.WriteAsync(buffer, 0, bytesRead);
+                        await context.Response.OutputStream.FlushAsync();
+                    }
+                    streamfile.ContentStream.Close();
+                }
+                else
+                {
+                    context.Response.ContentType = "application/json";
+                    var responseJson = JsonSerializer.Serialize(value);
+                    var buffer = Encoding.UTF8.GetBytes(responseJson);
+                    await context.Response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
+                }
             }
             catch
             {
-                return null;
+
+            }
+            finally
+            {
+                context.Response.Close();
             }
         }
 
