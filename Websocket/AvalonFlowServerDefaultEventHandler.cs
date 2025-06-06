@@ -8,7 +8,7 @@ namespace AvalonFlow.Websocket
 {
     public class AvalonFlowServerDefaultEventHandler : IAvalonFlowServerSocket
     {
-        public async Task OnConnectedAsync(AvalonWebSocket client)
+        public async Task OnConnectedAsync(AvalonSocketWebServer client)
         {
             if (client.IsConnected)
             {
@@ -27,7 +27,7 @@ namespace AvalonFlow.Websocket
         }
 
 
-        public Task OnDisconnectedAsync(AvalonWebSocket client)
+        public Task OnDisconnectedAsync(AvalonSocketWebServer client)
         {
             Console.WriteLine("Client disconnected event received.");
             return Task.CompletedTask;
@@ -45,13 +45,13 @@ namespace AvalonFlow.Websocket
             return Task.CompletedTask;
         }
 
-        public Task OnReconnectingAsync(AvalonWebSocket client)
+        public Task OnReconnectingAsync(AvalonSocketWebServer client)
         {
             Console.WriteLine("Reconnecting event received.");
             return Task.CompletedTask;
         }
 
-        public async Task<bool> AuthenticateAsync(AvalonWebSocket client, string token)
+        public async Task<bool> AuthenticateAsync(AvalonSocketWebServer client, string token)
         {
             var tokenHandler = new JwtSecurityTokenHandler();
             var key = Encoding.UTF8.GetBytes(AvalonFlowInstance.JwtSecretKey);
@@ -79,7 +79,7 @@ namespace AvalonFlow.Websocket
         }
 
         [AvalonFlow("chatMessage")]
-        public async void HandleChatMessage(AvalonWebSocketServer socket, AvalonWebSocket client, JsonElement data)
+        public async void HandleChatMessage(AvalonWebSocketServer socket, AvalonSocketWebServer client, JsonElement data)
         {
             if (data.TryGetProperty("message", out var messageElement))
             {

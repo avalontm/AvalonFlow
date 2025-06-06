@@ -1,18 +1,16 @@
-﻿using System.Net.WebSockets;
-using System.Text.Json;
+﻿using System.Text.Json;
 
 namespace AvalonFlow.Websocket
 {
     public class AvalonFlowClientDefaultEventHandler : IAvalonFlowClientSocket
     {
-
-        public Task OnConnectedAsync(ClientWebSocket client)
+        public Task OnConnectedAsync()
         {
             Console.WriteLine("Client connected to server.");
             return Task.CompletedTask;
         }
 
-        public Task OnDisconnectedAsync(ClientWebSocket client)
+        public Task OnDisconnectedAsync()
         {
             Console.WriteLine("Client disconnected from server.");
             return Task.CompletedTask;
@@ -30,34 +28,22 @@ namespace AvalonFlow.Websocket
             return Task.CompletedTask;
         }
 
-        public Task OnReconnectingAsync(ClientWebSocket client)
+        public Task OnReconnectingAsync()
         {
             Console.WriteLine("Client reconnecting...");
             return Task.CompletedTask;
         }
 
-        [AvalonFlow("CreateTicket")]
-        public void CreateTicket(JsonElement json)
-        {
-            Console.WriteLine($"CreateTicket received: {json}");
-        }
-
         [AvalonFlow("Welcome")]
-        public void WelcomeMessage(JsonElement data)
+        public void WelcomeMessage(AvalonSocketWebClient socket, JsonElement data)
         {
             var welcomeText = data.GetString();
             Console.WriteLine($"Welcome message from server: {welcomeText}");
         }
 
-        public Task<bool> AuthenticateAsync(AvalonWebSocket client, string token)
-        {
-            return Task.FromResult(false);
-        }
-
         [AvalonFlow("chatMessage")]
-        public void ReceiveChatMessage(JsonElement data)
+        public void ReceiveChatMessage(AvalonSocketWebClient socket, JsonElement data)
         {
-            // El mensaje y el remitente suelen estar en data["message"] y data["from"]
             string from = "";
             string message = "";
 

@@ -7,7 +7,7 @@ namespace AvalonFlow.Websocket
 {
     public class AvalonWebSocketClient
     {
-        private ClientWebSocket _ws = new();
+        private AvalonSocketWebClient _client = new();
         private readonly IAvalonFlowClientSocket _handlerInstance;
         private readonly Dictionary<string, MethodInfo> _eventHandlers = new();
         private readonly TimeSpan _reconnectDelay = TimeSpan.FromSeconds(5);
@@ -17,7 +17,7 @@ namespace AvalonFlow.Websocket
         private bool _manualDisconnect = false;
         private CancellationTokenSource _cts = new();
 
-        public bool IsConnected => _ws.State == WebSocketState.Open;
+        public bool IsConnected => _client.IsConnected;
 
         public AvalonWebSocketClient(IAvalonFlowClientSocket handlerInstance = null)
         {
@@ -48,12 +48,12 @@ namespace AvalonFlow.Websocket
 
             try
             {
-                if (_ws != null)
-                    _ws.Dispose();
+                if (_client.webSocket != null)
+                    _client.webSocket.Dispose();
 
-                _ws = new ClientWebSocket();
-                await _ws.ConnectAsync(uri, CancellationToken.None);
-                await _handlerInstance.OnConnectedAsync(_ws);
+                _client.SetWebSocket(new ClientWebSocket());
+                await _client.webSocket.ConnectAsync(uri, CancellationToken.None);
+                await _handlerInstance.OnConnectedAsync();
 
                 if (!string.IsNullOrEmpty(token))
                 {
@@ -64,7 +64,7 @@ namespace AvalonFlow.Websocket
                     });
 
                     var authBuffer = System.Text.Encoding.UTF8.GetBytes(authMessage);
-                    await _ws.SendAsync(new ArraySegment<byte>(authBuffer), WebSocketMessageType.Text, true, CancellationToken.None);
+                    await _client.webSocket.SendAsync(new ArraySegment<byte>(authBuffer), WebSocketMessageType.Text, true, CancellationToken.None);
                 }
 
                 _ = Task.Run(ReceiveLoop);
@@ -83,21 +83,21 @@ namespace AvalonFlow.Websocket
 
             try
             {
-                while (_ws.State == WebSocketState.Open && !_cts.Token.IsCancellationRequested)
+                while (_client.IsConnected && !_cts.Token.IsCancellationRequested)
                 {
                     using var ms = new MemoryStream();
                     WebSocketReceiveResult result;
 
                     do
                     {
-                        result = await _ws.ReceiveAsync(buffer, _cts.Token);
+                        result = await _client.webSocket.ReceiveAsync(buffer, _cts.Token);
                         if (result.MessageType == WebSocketMessageType.Close)
                             break;
 
                         ms.Write(buffer, 0, result.Count);
                     } while (!result.EndOfMessage);
 
-                    if (_ws.State != WebSocketState.Open)
+                    if (!_client.IsConnected)
                         break;
 
                     ms.Seek(0, SeekOrigin.Begin);
@@ -110,18 +110,23 @@ namespace AvalonFlow.Websocket
                         var evt = eventProp.GetString();
                         if (evt != null && _eventHandlers.TryGetValue(evt, out var method))
                         {
-                            var parameters = method.GetParameters();
-                            object?[] args = parameters.Length == 1 && parameters[0].ParameterType == typeof(JsonElement)
-                                ? new object?[] { dataProp }
-                                : Array.Empty<object>();
+                            try
+                            {
+                                var args = new object[] { _client, dataProp };
+                                var resultInvoke = method.Invoke(_handlerInstance, args);
 
-                            var resultInvoke = method.Invoke(_handlerInstance, args);
-                            if (resultInvoke is Task task)
-                                await task;
+                                if (resultInvoke is Task task)
+                                    await task;
+                            }
+                            catch (Exception ex)
+                            {
+                                await _handlerInstance.OnErrorAsync(ex);
+                            }
                         }
                         else
                         {
-                            Console.WriteLine($"No handler found for event '{evt}'");
+                            // Si no hay un manejador para el evento, se puede manejar aquí o ignorar
+                            Console.WriteLine($"No handler for event: {evt}");
                         }
                     }
                 }
@@ -136,9 +141,9 @@ namespace AvalonFlow.Websocket
             }
             finally
             {
-                await _handlerInstance.OnDisconnectedAsync(_ws);
+                await _handlerInstance.OnDisconnectedAsync();
 
-                if (!_manualDisconnect && _lastUri != null && _ws.State != WebSocketState.Open)
+                if (!_manualDisconnect && _lastUri != null && !_client.IsConnected)
                 {
                     await AttemptReconnectAsync();
                 }
@@ -150,23 +155,23 @@ namespace AvalonFlow.Websocket
             _manualDisconnect = true;
             _cts.Cancel();
 
-            if (_ws.State == WebSocketState.Open || _ws.State == WebSocketState.CloseReceived)
+            if (_client.IsConnected || _client.webSocket.State == WebSocketState.CloseReceived)
             {
-                await _ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "Client disconnect", CancellationToken.None);
+                await _client.webSocket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "Client disconnect", CancellationToken.None);
 
                 var buffer = new byte[1024];
-                while (_ws.State != WebSocketState.Closed && _ws.State != WebSocketState.Aborted)
+                while (_client.webSocket.State != WebSocketState.Closed && _client.webSocket.State != WebSocketState.Aborted)
                 {
-                    var result = await _ws.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
+                    var result = await _client.webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
                     if (result.MessageType == WebSocketMessageType.Close)
                     {
-                        await _ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing after server close", CancellationToken.None);
+                        await _client.webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing after server close", CancellationToken.None);
                         break;
                     }
                 }
             }
 
-            await _handlerInstance.OnDisconnectedAsync(_ws);
+            await _handlerInstance.OnDisconnectedAsync();
         }
 
 
@@ -176,7 +181,7 @@ namespace AvalonFlow.Websocket
 
             while ((_maxRetries < 0 || retries < _maxRetries) && !_manualDisconnect)
             {
-                await _handlerInstance.OnReconnectingAsync(_ws);
+                await _handlerInstance.OnReconnectingAsync();
 
                 try
                 {
@@ -210,7 +215,7 @@ namespace AvalonFlow.Websocket
             });
 
             var buffer = Encoding.UTF8.GetBytes(message);
-            await _ws.SendAsync(new ArraySegment<byte>(buffer), WebSocketMessageType.Text, true, CancellationToken.None);
+            await _client.webSocket.SendAsync(new ArraySegment<byte>(buffer), WebSocketMessageType.Text, true, CancellationToken.None);
         }
 
     }

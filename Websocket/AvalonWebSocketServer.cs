@@ -15,10 +15,10 @@ namespace AvalonFlow.Websocket
         private readonly IAvalonFlowServerSocket _handlerInstance;
 
         // Almacena conexiones activas: userId -> WebSocket
-        private readonly ConcurrentDictionary<string, AvalonWebSocket> _clients = new();
+        private readonly ConcurrentDictionary<string, AvalonSocketWebServer> _clients = new();
 
         // Opcional: grupos -> lista de userIds
-        private readonly ConcurrentDictionary<string, List<AvalonWebSocket>> _groups = new();
+        private readonly ConcurrentDictionary<string, List<AvalonSocketWebServer>> _groups = new();
 
         public AvalonWebSocketServer(string prefix, IAvalonFlowServerSocket handlerInstance = null)
         {
@@ -100,7 +100,7 @@ namespace AvalonFlow.Websocket
                                 {
                                     // Delay para esperar el token del cliente
                                     await Task.Delay(100);
-                                    AvalonWebSocket client = new AvalonWebSocket(webSocket);
+                                    AvalonSocketWebServer client = new AvalonSocketWebServer(webSocket);
                                     string token = dataElement.GetString() ?? "";
                                     bool isAuth = await _eventHandler.AuthenticateAsync(client, token);
 
@@ -138,11 +138,21 @@ namespace AvalonFlow.Websocket
                                 {
                                     if (!string.IsNullOrEmpty(socketId) && _clients.TryGetValue(socketId, out var client))
                                     {
-                                        var invokeResult = method.Invoke(_handlerInstance, new object[] { this, client, dataElement });
-
-                                        if (invokeResult is Task task)
+                                        try
                                         {
-                                            await task;
+                                            var invokeResult = method.Invoke(_handlerInstance, new object[] { this, client, dataElement });
+
+                                            if (invokeResult is Task task)
+                                            {
+                                                await task;
+                                            }
+                                        }
+                                        catch (Exception ex)
+                                        {
+                                            if (_handlerInstance is IAvalonFlowServerSocket eventHandlerErr)
+                                            {
+                                                await eventHandlerErr.OnErrorAsync(ex);
+                                            }
                                         }
                                     }
                                     else
@@ -215,7 +225,7 @@ namespace AvalonFlow.Websocket
         {
             if (_groups.TryGetValue(groupId, out var users))
             {
-                foreach (AvalonWebSocket socket in users)
+                foreach (AvalonSocketWebServer socket in users)
                 {
                     await SendToClientAsync(socket.UserId, action, data);
                 }
@@ -223,10 +233,10 @@ namespace AvalonFlow.Websocket
         }
 
         // Agregar usuario a grupo
-        public void AddToGroup(string groupId, AvalonWebSocket socket)
+        public void AddToGroup(string groupId, AvalonSocketWebServer socket)
         {
             _groups.AddOrUpdate(groupId,
-                _ => new List<AvalonWebSocket> { socket },
+                _ => new List<AvalonSocketWebServer> { socket },
                 (_, list) =>
                 {
                     if (!list.Contains(socket))
@@ -236,7 +246,7 @@ namespace AvalonFlow.Websocket
         }
 
         // Remover usuario de grupo
-        public void RemoveFromGroup(string groupId, AvalonWebSocket socket)
+        public void RemoveFromGroup(string groupId, AvalonSocketWebServer socket)
         {
             if (_groups.TryGetValue(groupId, out var list))
             {

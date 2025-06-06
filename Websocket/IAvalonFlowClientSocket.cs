@@ -12,17 +12,17 @@ namespace AvalonFlow.Websocket
     {/// <summary>
      /// Invoked when a new connection is established.
      /// </summary>
-        Task OnConnectedAsync(ClientWebSocket client);
+        Task OnConnectedAsync();
 
         /// <summary>
         /// Invoked when a disconnection occurs.
         /// </summary>
-        Task OnDisconnectedAsync(ClientWebSocket client);
+        Task OnDisconnectedAsync();
 
         /// <summary>
         /// Invoked when the client reconnects.
         /// </summary>
-        Task OnReconnectingAsync(ClientWebSocket client);
+        Task OnReconnectingAsync();
 
         /// <summary>
         /// Invoked when a message is received.

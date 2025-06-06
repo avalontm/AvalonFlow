@@ -10,22 +10,22 @@ namespace AvalonFlow.Websocket
         /// </summary>
         /// <param name="token">The token to authenticate.</param>
         /// <returns>True if authentication is successful.</returns>
-        Task<bool> AuthenticateAsync(AvalonWebSocket client, string token);
+        Task<bool> AuthenticateAsync(AvalonSocketWebServer client, string token);
 
         /// <summary>
         /// Invoked when a new connection is established.
         /// </summary>
-        Task OnConnectedAsync(AvalonWebSocket client);
+        Task OnConnectedAsync(AvalonSocketWebServer client);
 
         /// <summary>
         /// Invoked when a disconnection occurs.
         /// </summary>
-        Task OnDisconnectedAsync(AvalonWebSocket client);
+        Task OnDisconnectedAsync(AvalonSocketWebServer client);
 
         /// <summary>
         /// Invoked when the client reconnects.
         /// </summary>
-        Task OnReconnectingAsync(AvalonWebSocket client);
+        Task OnReconnectingAsync(AvalonSocketWebServer client);
 
         /// <summary>
         /// Invoked when a message is received.
