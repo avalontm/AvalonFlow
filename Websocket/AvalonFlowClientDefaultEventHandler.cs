@@ -1,26 +1,18 @@
 ﻿using System.Net.WebSockets;
 using System.Text.Json;
 
-namespace AvalonFlow
+namespace AvalonFlow.Websocket
 {
-    public class AvalonFlowClientEventHandler : IAvalonFlowSocket
+    public class AvalonFlowClientDefaultEventHandler : IAvalonFlowClientSocket
     {
-        private WebSocket? _webSocket;
 
-        public bool IsAuthenticated { private set; get; }
-
-        public void SetWebSocket(WebSocket webSocket)
-        {
-            _webSocket = webSocket;
-        }
-
-        public Task OnConnectedAsync()
+        public Task OnConnectedAsync(ClientWebSocket client)
         {
             Console.WriteLine("Client connected to server.");
             return Task.CompletedTask;
         }
 
-        public Task OnDisconnectedAsync()
+        public Task OnDisconnectedAsync(ClientWebSocket client)
         {
             Console.WriteLine("Client disconnected from server.");
             return Task.CompletedTask;
@@ -38,7 +30,7 @@ namespace AvalonFlow
             return Task.CompletedTask;
         }
 
-        public Task OnReconnectingAsync()
+        public Task OnReconnectingAsync(ClientWebSocket client)
         {
             Console.WriteLine("Client reconnecting...");
             return Task.CompletedTask;
@@ -57,9 +49,25 @@ namespace AvalonFlow
             Console.WriteLine($"Welcome message from server: {welcomeText}");
         }
 
-        public Task<bool> AuthenticateAsync(string token)
+        public Task<bool> AuthenticateAsync(AvalonWebSocket client, string token)
         {
             return Task.FromResult(false);
+        }
+
+        [AvalonFlow("chatMessage")]
+        public void ReceiveChatMessage(JsonElement data)
+        {
+            // El mensaje y el remitente suelen estar en data["message"] y data["from"]
+            string from = "";
+            string message = "";
+
+            if (data.TryGetProperty("from", out var fromProp))
+                from = fromProp.GetString() ?? "";
+
+            if (data.TryGetProperty("message", out var messageProp))
+                message = messageProp.GetString() ?? "";
+
+            Console.WriteLine($"[Chat][{from}]: {message}");
         }
     }
 }

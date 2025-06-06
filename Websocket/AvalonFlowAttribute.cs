@@ -1,4 +1,4 @@
-﻿namespace AvalonFlow
+﻿namespace AvalonFlow.Websocket
 {
     [AttributeUsage(AttributeTargets.Method, AllowMultiple = false)]
     public class AvalonFlowAttribute : Attribute
