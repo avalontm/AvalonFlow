@@ -17,7 +17,16 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <None Include="..\..\..\Desktop\AvalonFlow.jpg">
+    <Compile Remove="images\**" />
+    <Compile Remove="samples\**" />
+    <EmbeddedResource Remove="images\**" />
+    <EmbeddedResource Remove="samples\**" />
+    <None Remove="images\**" />
+    <None Remove="samples\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="AvalonFlow.jpg">
       <Pack>True</Pack>
       <PackagePath>\</PackagePath>
     </None>

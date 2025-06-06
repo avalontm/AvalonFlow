@@ -1,66 +1,208 @@
-# AvalonFlow
+# AvalonFlow REST API
 
-**AvalonFlow** is a lightweight, thread-safe, asynchronous queue manager designed to process tasks sequentially by key. It’s ideal for managing processes that must run one at a time per resource (e.g., per user, device, or session) while still allowing parallelism across different keys.
-
----
-
-## ✨ Features
-
-- 🔄 Per-key sequential task execution
-- ⚙️ Configurable timeout per process
-- ✅ Manual or automatic queue processing
-- 📌 Finish or cancel tasks programmatically
-- 🧵 Thread-safe with `ConcurrentDictionary` and `ConcurrentQueue`
-- 📦 .NET Standard 2.0+ and .NET 6/7/8 compatible
+Bienvenido a la documentación de la API REST de **AvalonFlow**. Este proyecto implementa un framework HTTP minimalista basado en `HttpListener` para construir APIs REST modernas en C#.
 
 ---
 
-## 📦 Installation
+## 📚 Características
 
-You can install AvalonFlow via [NuGet](https://www.nuget.org/packages/AvalonFlow):
+* Ruteo mediante atributos (\[HttpGet], \[HttpPost], etc.).
+* Inyección de parámetros y deserialización automática.
+* Manejo de respuestas con `ActionResult`, `FileActionResult` y `StreamFileActionResult`.
+* Soporte para descarga y streaming de archivos.
+* Sistema de controladores tipo MVC.
+* Seguridad por token personalizada.
+
+---
+
+## ⚙️ Ejemplo de uso
+
+```text
+using AvalonFlow;
+using AvalonFlow.Rest;
+using AvalonFlowRest.Services;
+
+namespace AvalonFlowRest
+{
+    internal class Program
+    {
+        static async Task Main(string[] args)
+        {
+            // Opcional: puedes leer puerto de args o config
+            int port = 5000;
+
+            var server = new AvalonRestServer(port);
+            // al iniciar el servidor
+            AvalonServiceRegistry.RegisterSingleton<EmailService>(new EmailService());
+
+            await server.StartAsync(); // Corre el servidor indefinidamente
+        }
+    }
+}
+
+```
+
+---
+
+## 🚀 Ejecución Rápida
 
 ```bash
-dotnet add package AvalonFlow
-using AvalonFlow;
+# Ejecutar desde consola
+$ dotnet run
+```
 
-// Create the queue service with optional timeout and logging
-var flowQueue = new AvalonFlowQueueService<MyProcess>(maxSeconds: 10, autoStart: true, onLog: Console.WriteLine);
+El servidor correrá por defecto en:
 
-// Enqueue a task
-await flowQueue.Enqueue("client-123", new MyProcess
+```
+http://localhost:5000/
+```
+
+---
+
+## 📂 Endpoints
+
+### 💾 Descargar Archivo
+
+**GET** `/api/file/download`
+
+Descarga un archivo como attachment.
+
+```http
+GET /api/file/download HTTP/1.1
+```
+
+### 🎥 Ver Video (Streaming)
+
+**GET** `/api/file/video`
+
+Stream de un archivo de video.
+
+```http
+GET /api/file/video HTTP/1.1
+```
+
+### 🖼️ Ver Imagen
+
+**GET** `/api/file/image`
+
+Renderiza la imagen inline.
+
+```http
+GET /api/file/image HTTP/1.1
+```
+
+> Se recomienda mostrarla en HTML con `img` y `pointer-events: none` para evitar interacciones.
+
+---
+
+## 🧭 Uso de Controllers
+
+```csharp
+[AvalonController("api/[controller]")]
+public class FileController : AvalonControllerBase
 {
-    Work = async token =>
-    {
-        // Simulate work
-        await Task.Delay(3000, token);
-    }
-});
-
-// Optionally call FinishProcess("client-123") to complete early
-
-public class MyProcess : IFlowProcess
-{
-    public DateTime StartTime { get; set; }
-    public DateTime EndTime { get; set; }
-    public Func<CancellationToken, Task>? Work { get; set; }
-    public TaskCompletionSource<bool> Completion { get; } = new();
+    [HttpGet("download")]
+    public ActionResult DownloadFile() => ...;
 }
 ```
 
-🛠️ API Highlights
+* `[AvalonController]`: Define la ruta base del controller.
+* Hereda de `AvalonControllerBase` para acceso a métodos como `Ok()`, `NotFound()`, `File()`, etc.
+
+### Métodos soportados:
+
+* `[HttpGet("ruta")]`
+* `[HttpPost("ruta")]`
+* `[HttpPut("ruta")]`
+* `[HttpDelete("ruta")]`
+* `[HttpPatch("ruta")]`
+* `[HttpOptions("ruta")]`
+
+### Inyección de parámetros
+
+```csharp
+[HttpGet("usuario/{id}")]
+public ActionResult GetUsuario(int id)
+{
+    // id es inyectado desde la ruta
+}
+
+[HttpPost("crear")]
+public ActionResult CrearUsuario(UsuarioDto dto)
+{
+    // dto es deserializado automáticamente desde el body JSON
+}
 ```
-Enqueue(string key, T process)              // Adds a process to a key-based queue
-StartProcessing(string key)                // Starts processing manually if autoStart is false
-FinishProcess(string key)                  // Completes current task early
-CancelProcessing(string key)              // Cancels the current process
-GetLastProcessTask(string key)            // Gets the currently running task for that key
+
+---
+
+## 🔐 Seguridad y Autenticación
+
+AvalonFlow permite validar manualmente las peticiones antes de ejecutar los controladores:
+
+```csharp
+if (!context.Request.Headers.TryGetValue("Authorization", out var token) || !ValidateToken(token))
+{
+    await RespondWith(context, 401, new { error = "Unauthorized" });
+    return;
+}
 ```
 
-🧱 Supported Platforms
-✅ .NET Standard 2.0+
+También puedes aplicar autorización por controlador o endpoint:
 
-✅ .NET Core 3.1
+```csharp
+[HttpGet("secure")]
+public ActionResult GetProtectedFile()
+{
+    if (!HttpContext.User?.IsAuthenticated ?? true)
+        return Unauthorized("Token inválido");
+    // lógica segura
+}
+```
 
-✅ .NET 5/6/7/8
+> Puedes extender `AvalonHttpContext` para guardar info del usuario autenticado.
 
-✅ Windows, Linux, macOS
+---
+
+## 🛡️ Seguridad para Archivos
+
+Para proteger el acceso a archivos y multimedia:
+
+* ✅ Requiere autenticación JWT o tokens temporales.
+* ✅ Evita `Content-Disposition: attachment` si no deseas descargas.
+* ✅ Implementa `token` o `exp` para URLs seguras.
+* ✅ Usa marcas de agua si es contenido sensible.
+* ✅ Añade headers:
+
+```csharp
+context.Response.AddHeader("Cache-Control", "no-store");
+context.Response.AddHeader("Pragma", "no-cache");
+context.Response.AddHeader("Content-Security-Policy", "default-src 'none';");
+```
+
+---
+
+## 🔧 Ejemplo de Uso
+
+```csharp
+[HttpGet("image")]
+public ActionResult GetImage()
+{
+    var path = Path.Combine(Directory.GetCurrentDirectory(), "files", "imagen.jpg");
+    if (!System.IO.File.Exists(path)) return NotFound("Imagen no encontrada.");
+    var stream = System.IO.File.OpenRead(path);
+    return new StreamFileActionResult(stream, "image/jpeg", "imagen.jpg", isAttachment: false);
+}
+```
+
+---
+
+## ✨ Contribuciones
+
+Tus contribuciones son bienvenidas. Abre un Pull Request o issue para colaborar.
+
+---
+
+## 📄 Licencia
+
+Este proyecto está licenciado bajo MIT. Consulta `LICENSE` para más detalles.

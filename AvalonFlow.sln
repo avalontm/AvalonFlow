@@ -5,13 +5,7 @@ VisualStudioVersion = 17.13.35913.81
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AvalonFlow", "AvalonFlow.csproj", "{9EE4ED5F-7E89-4EBF-8010-FF672FFEC480}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AvalonFlowTask", "..\AvalonFlowConsole\AvalonFlowTask.csproj", "{8B0DAE90-8F52-4EC3-9A0E-2F3D72889AA0}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SocketFlowServer", "..\SocketFlowConsole\SocketFlowServer.csproj", "{3DA573CE-638D-4BCA-89DA-EA332E2330DC}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AvalonFlowClient", "..\AvalonFlowClient\AvalonFlowClient.csproj", "{954E513F-3296-4BC1-987B-E4A4E36B2041}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AvalonFlowRest", "..\AvalonFlowRest\AvalonFlowRest.csproj", "{9F5ABA36-071B-46DA-BF9C-0CE881636CA7}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AvalonFlowRest", "samples\AvalonFlowRest\AvalonFlowRest.csproj", "{FE9D5B42-A931-A71D-B192-BD69D2E8A2DB}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -23,22 +17,10 @@ Global
 		{9EE4ED5F-7E89-4EBF-8010-FF672FFEC480}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{9EE4ED5F-7E89-4EBF-8010-FF672FFEC480}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{9EE4ED5F-7E89-4EBF-8010-FF672FFEC480}.Release|Any CPU.Build.0 = Release|Any CPU
-		{8B0DAE90-8F52-4EC3-9A0E-2F3D72889AA0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{8B0DAE90-8F52-4EC3-9A0E-2F3D72889AA0}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{8B0DAE90-8F52-4EC3-9A0E-2F3D72889AA0}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{8B0DAE90-8F52-4EC3-9A0E-2F3D72889AA0}.Release|Any CPU.Build.0 = Release|Any CPU
-		{3DA573CE-638D-4BCA-89DA-EA332E2330DC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{3DA573CE-638D-4BCA-89DA-EA332E2330DC}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{3DA573CE-638D-4BCA-89DA-EA332E2330DC}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{3DA573CE-638D-4BCA-89DA-EA332E2330DC}.Release|Any CPU.Build.0 = Release|Any CPU
-		{954E513F-3296-4BC1-987B-E4A4E36B2041}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{954E513F-3296-4BC1-987B-E4A4E36B2041}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{954E513F-3296-4BC1-987B-E4A4E36B2041}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{954E513F-3296-4BC1-987B-E4A4E36B2041}.Release|Any CPU.Build.0 = Release|Any CPU
-		{9F5ABA36-071B-46DA-BF9C-0CE881636CA7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{9F5ABA36-071B-46DA-BF9C-0CE881636CA7}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{9F5ABA36-071B-46DA-BF9C-0CE881636CA7}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{9F5ABA36-071B-46DA-BF9C-0CE881636CA7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{FE9D5B42-A931-A71D-B192-BD69D2E8A2DB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FE9D5B42-A931-A71D-B192-BD69D2E8A2DB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FE9D5B42-A931-A71D-B192-BD69D2E8A2DB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FE9D5B42-A931-A71D-B192-BD69D2E8A2DB}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
