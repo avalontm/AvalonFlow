@@ -7,7 +7,7 @@ namespace AvalonFlow.Websocket
 {
     public class AvalonWebSocketClient
     {
-        private AvalonSocketWebClient _client = new();
+        private SocketWebClient _client = new();
         private readonly IAvalonFlowClientSocket _handlerInstance;
         private readonly Dictionary<string, MethodInfo> _eventHandlers = new();
         private readonly TimeSpan _reconnectDelay = TimeSpan.FromSeconds(5);
@@ -104,15 +104,33 @@ namespace AvalonFlow.Websocket
                     using var doc = await JsonDocument.ParseAsync(ms);
                     var root = doc.RootElement;
 
-                    if (root.TryGetProperty("action", out var eventProp) &&
-                        root.TryGetProperty("data", out var dataProp))
+                    if (root.TryGetProperty("action", out var eventProp) && root.TryGetProperty("data", out var dataProp))
                     {
                         var evt = eventProp.GetString();
                         if (evt != null && _eventHandlers.TryGetValue(evt, out var method))
                         {
                             try
                             {
-                                var args = new object[] { _client, dataProp };
+                                var parameters = method.GetParameters();
+                                object?[] args;
+
+                                if (parameters.Length == 2 &&
+                                    parameters[0].ParameterType == typeof(SocketWebClient) &&
+                                    parameters[1].ParameterType == typeof(JsonElement))
+                                {
+                                    args = new object[] { _client, dataProp };
+                                }
+                                else if (parameters.Length == 1 &&
+                                         parameters[0].ParameterType == typeof(JsonElement))
+                                {
+                                    args = new object[] { dataProp };
+                                }
+                                else
+                                {
+                                    Console.WriteLine($"Handler '{evt}' has unsupported parameter signature.");
+                                    return;
+                                }
+
                                 var resultInvoke = method.Invoke(_handlerInstance, args);
 
                                 if (resultInvoke is Task task)
@@ -125,10 +143,10 @@ namespace AvalonFlow.Websocket
                         }
                         else
                         {
-                            // Si no hay un manejador para el evento, se puede manejar aquí o ignorar
                             Console.WriteLine($"No handler for event: {evt}");
                         }
                     }
+
                 }
             }
             catch (OperationCanceledException)

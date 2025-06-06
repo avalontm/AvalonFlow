@@ -35,17 +35,21 @@ namespace AvalonFlow.Websocket
         }
 
         [AvalonFlow("Welcome")]
-        public void WelcomeMessage(AvalonSocketWebClient socket, JsonElement data)
+        public void WelcomeMessage(JsonElement data)
         {
             var welcomeText = data.GetString();
             Console.WriteLine($"Welcome message from server: {welcomeText}");
         }
 
         [AvalonFlow("chatMessage")]
-        public void ReceiveChatMessage(AvalonSocketWebClient socket, JsonElement data)
+        public void ReceiveChatMessage(SocketWebClient socket, JsonElement data)
         {
+            string time = "";
             string from = "";
             string message = "";
+
+            if (data.TryGetProperty("time", out var timeProp))
+                time = timeProp.GetString() ?? "";
 
             if (data.TryGetProperty("from", out var fromProp))
                 from = fromProp.GetString() ?? "";
@@ -53,7 +57,7 @@ namespace AvalonFlow.Websocket
             if (data.TryGetProperty("message", out var messageProp))
                 message = messageProp.GetString() ?? "";
 
-            Console.WriteLine($"[Chat][{from}]: {message}");
+            Console.WriteLine($"[{time}] [Chat][{from}]: {message}");
         }
     }
 }

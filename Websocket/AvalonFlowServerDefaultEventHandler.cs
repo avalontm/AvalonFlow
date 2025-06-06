@@ -8,7 +8,7 @@ namespace AvalonFlow.Websocket
 {
     public class AvalonFlowServerDefaultEventHandler : IAvalonFlowServerSocket
     {
-        public async Task OnConnectedAsync(AvalonSocketWebServer client)
+        public async Task OnConnectedAsync(SocketWebServer client)
         {
             if (client.IsConnected)
             {
@@ -22,36 +22,36 @@ namespace AvalonFlow.Websocket
                 var bytes = Encoding.UTF8.GetBytes(json);
 
                 await client.webSocket.SendAsync(bytes, WebSocketMessageType.Text, true, CancellationToken.None);
-                Console.WriteLine($"Client connected");
+                AvalonFlowInstance.Log($"Client connected: {client.UserId}");
             }
         }
 
 
-        public Task OnDisconnectedAsync(AvalonSocketWebServer client)
+        public Task OnDisconnectedAsync(SocketWebServer client)
         {
-            Console.WriteLine("Client disconnected event received.");
+            AvalonFlowInstance.Log($"Client disconnected event received.");
             return Task.CompletedTask;
         }
 
         public Task OnErrorAsync(Exception ex)
         {
-            Console.WriteLine($"Error event received: {ex.Message}");
+            AvalonFlowInstance.Log($"Error event received: {ex.Message}");
             return Task.CompletedTask;
         }
 
         public Task OnMessageReceivedAsync(JsonElement message)
         {
-            Console.WriteLine($"Message received: {message}");
+            AvalonFlowInstance.Log($"Message received: {message}");
             return Task.CompletedTask;
         }
 
-        public Task OnReconnectingAsync(AvalonSocketWebServer client)
+        public Task OnReconnectingAsync(SocketWebServer client)
         {
-            Console.WriteLine("Reconnecting event received.");
+            AvalonFlowInstance.Log($"Reconnecting event received.");
             return Task.CompletedTask;
         }
 
-        public async Task<bool> AuthenticateAsync(AvalonSocketWebServer client, string token)
+        public async Task<bool> AuthenticateAsync(SocketWebServer client, string token)
         {
             var tokenHandler = new JwtSecurityTokenHandler();
             var key = Encoding.UTF8.GetBytes(AvalonFlowInstance.JwtSecretKey);
@@ -73,23 +73,23 @@ namespace AvalonFlow.Websocket
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Token inválido: {ex.Message}");
+                AvalonFlowInstance.Log($"Invalid Token: {ex.Message}");
                 return false;
             }
         }
 
         [AvalonFlow("chatMessage")]
-        public async void HandleChatMessage(AvalonWebSocketServer socket, AvalonSocketWebServer client, JsonElement data)
+        public async void HandleChatMessage(AvalonWebSocketServer socket, SocketWebServer client, JsonElement data)
         {
             if (data.TryGetProperty("message", out var messageElement))
             {
                 string message = messageElement.GetString() ?? "";
 
-                await socket.BroadcastAsync("chatMessage", new { from = client.UserId, message = message });
+                await socket.BroadcastAsync("chatMessage", new { time = DateTime.Now.ToString("hh:mm:ss"), from = client.UserId, message = message });
             }
             else
             {
-                Console.WriteLine("El mensaje recibido no tiene la propiedad 'message'.");
+                AvalonFlowInstance.Log($"El mensaje recibido no tiene la propiedad 'message'.");
             }
         }
     }

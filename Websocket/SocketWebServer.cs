@@ -2,7 +2,7 @@
 
 namespace AvalonFlow.Websocket
 {
-    public class AvalonSocketWebServer
+    public class SocketWebServer
     {
         public WebSocket? webSocket { get; private set; }
         public string? SocketId => webSocket?.GetHashCode().ToString();
@@ -10,7 +10,7 @@ namespace AvalonFlow.Websocket
         public bool IsAuthenticated => !string.IsNullOrEmpty(UserId);
         public bool IsConnected => webSocket != null && webSocket.State == WebSocketState.Open;
 
-        public AvalonSocketWebServer(WebSocket? webSocket = null, string userId = "")
+        public SocketWebServer(WebSocket? webSocket = null, string userId = "")
         {
             this.webSocket = webSocket;
             UserId = userId;
@@ -24,7 +24,6 @@ namespace AvalonFlow.Websocket
         public void SetUserId(string userId)
         {
             UserId = userId;
-            Console.WriteLine($"UserId set to: {userId} for socket {SocketId}");
         }
     }
 }

@@ -31,5 +31,9 @@ namespace AvalonFlow
             return tokenHandler.WriteToken(token);
         }
 
+        public static void Log(string message)
+        {
+            Console.WriteLine($"[{DateTime.Now.ToString("hh:mm:ss")}] {message}");
+        }
     }
 }

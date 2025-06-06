@@ -4,14 +4,14 @@ using System.Text.Json;
 
 namespace AvalonFlow.Websocket
 {
-    public class AvalonSocketWebClient
+    public class SocketWebClient
     {
         public ClientWebSocket? webSocket { get; private set; }
         public string? UserId { get; private set; }
         public bool IsAuthenticated => !string.IsNullOrEmpty(UserId);
         public bool IsConnected => webSocket != null && webSocket.State == WebSocketState.Open;
 
-        public AvalonSocketWebClient(ClientWebSocket? webSocket = null, string userId = "")
+        public SocketWebClient(ClientWebSocket? webSocket = null, string userId = "")
         {
             this.webSocket = webSocket;
             UserId = userId;
