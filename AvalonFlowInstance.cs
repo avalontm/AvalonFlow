@@ -17,7 +17,7 @@ namespace AvalonFlow
 
             if (expires == null)
             {
-                expires = DateTime.UtcNow.AddHours(2);
+                expires = DateTime.UtcNow.AddDays(7);
             }
             else if (expires < DateTime.UtcNow)
             {
