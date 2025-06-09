@@ -1,6 +1,4 @@
-﻿using Microsoft.IdentityModel.Tokens;
-using System.IdentityModel.Tokens.Jwt;
-using System.Net;
+﻿using System.Net;
 using System.Reflection;
 using System.Security.Claims;
 using System.Text;
@@ -12,9 +10,16 @@ namespace AvalonFlow.Rest
     {
         private readonly HttpListener _listener;
         private readonly Dictionary<string, Type> _controllers = new();
+        private readonly string _corsAllowedOrigins;
+        private readonly string _corsAllowedMethods;
+        private readonly string _corsAllowedHeaders;
 
-        public AvalonRestServer(int port, bool useHttps = false)
+        public AvalonRestServer(int port, bool useHttps = false, string corsAllowedOrigins = "*", string corsAllowedMethods = "GET, POST, PUT, DELETE, OPTIONS", string corsAllowedHeaders = "Content-Type, Authorization")
         {
+            _corsAllowedOrigins = corsAllowedOrigins;
+            _corsAllowedMethods = corsAllowedMethods;
+            _corsAllowedHeaders = corsAllowedHeaders;
+
             try
             {
                 _listener = new HttpListener();
@@ -28,6 +33,11 @@ namespace AvalonFlow.Rest
                 AvalonFlowInstance.Log($"Error initializing server: {ex.Message}");
                 throw;
             }
+        }
+
+        public void AddService<T>()
+        {
+            AvalonServiceRegistry.RegisterSingleton<T>(Activator.CreateInstance<T>());
         }
 
         private void RegisterControllersInAllAssemblies()
@@ -92,6 +102,17 @@ namespace AvalonFlow.Rest
         {
             try
             {
+                var request = context.Request;
+                var response = context.Response;
+
+                if (request.HttpMethod.Equals("OPTIONS", StringComparison.OrdinalIgnoreCase))
+                {
+                    AddCorsHeaders(response);
+                    response.StatusCode = 204;
+                    response.Close();
+                    return;
+                }
+
                 string method = context.Request.HttpMethod.ToUpperInvariant();
                 string[] segments = context.Request.Url.AbsolutePath.Trim('/').Split('/');
 
@@ -223,27 +244,40 @@ namespace AvalonFlow.Rest
                         }
                     }
                 }
-
-                // Ejecutar el método
-                object[] parameters = await ResolveParameters(matchedMethod, context, routeParams);
-                var result = matchedMethod.Invoke(controllerInstance, parameters);
-
-                if (result is Task task)
+                try
                 {
-                    await task;
-                    result = task.GetType().IsGenericType
-                        ? task.GetType().GetProperty("Result")?.GetValue(task)
-                        : null;
+                    object[] parameters = await ResolveParameters(matchedMethod, context, routeParams);
+                    var result = matchedMethod.Invoke(controllerInstance, parameters);
+
+                    if (result is Task task)
+                    {
+                        await task;
+                        result = task.GetType().IsGenericType
+                            ? task.GetType().GetProperty("Result")?.GetValue(task)
+                            : null;
+                    }
+
+                    if (result is ActionResult actionResult)
+                    {
+                        // Extraer sólo la propiedad Value antes de devolver
+                        var valueToReturn = actionResult.GetType().GetProperty("Value")?.GetValue(actionResult) ?? new { };
+
+                        await RespondWith(context, actionResult.StatusCode, valueToReturn);
+                    }
+                    else
+                    {
+                        await RespondWith(context, 200, result ?? new { });
+                    }
+
                 }
-
-                if (result is ActionResult actionResult)
+                catch (InvalidOperationException invEx)
                 {
-                    // Pasar el ActionResult completo para detectar FileActionResult
-                    await RespondWith(context, actionResult.StatusCode, actionResult);
+                    await RespondWith(context, 400, new { error = invEx.Message });
                 }
-                else
+                catch (Exception ex)
                 {
-                    await RespondWith(context, 200, result ?? new { });
+                    AvalonFlowInstance.Log($"Error: {ex}");
+                    await RespondWith(context, 500, new { error = "Internal server error" });
                 }
             }
             catch (Exception ex)
@@ -268,6 +302,7 @@ namespace AvalonFlow.Rest
             foreach (var param in parameters)
             {
                 var fromBody = param.GetCustomAttribute<FromBodyAttribute>() != null;
+                var fromHeader = param.GetCustomAttribute<FromHeaderAttribute>();
 
                 if (fromBody)
                 {
@@ -280,7 +315,12 @@ namespace AvalonFlow.Rest
                     if (param.ParameterType == typeof(JsonElement))
                     {
                         var jsonDoc = JsonDocument.Parse(body);
-                        resolved.Add(jsonDoc.RootElement);
+                        var root = jsonDoc.RootElement;
+
+                        if (root.ValueKind != JsonValueKind.Object)
+                            throw new InvalidOperationException("Invalid JSON format: expected a JSON object.");
+
+                        resolved.Add(root);
                     }
                     else
                     {
@@ -289,30 +329,56 @@ namespace AvalonFlow.Rest
                             PropertyNameCaseInsensitive = true
                         });
 
+                        if (deserialized == null)
+                            throw new InvalidOperationException("Invalid JSON format: could not deserialize the object.");
+
                         resolved.Add(deserialized);
                     }
+                }
+                else if (fromHeader != null)
+                {
+                    string headerName = fromHeader.Name ?? param.Name!;
+                    string? headerValue = context.Request.Headers[headerName];
+
+                    if (string.IsNullOrWhiteSpace(headerValue))
+                    {
+                        throw new InvalidOperationException($"Missing required header: '{headerName}'");
+                    }
+
+                    var converted = Convert.ChangeType(headerValue, param.ParameterType);
+                    resolved.Add(converted);
                 }
                 else if (param.ParameterType == typeof(HttpListenerContext))
                 {
                     resolved.Add(context);
                 }
-                else if (routeParams.TryGetValue(param.Name!, out var value))
+                else if (routeParams.TryGetValue(param.Name!.ToLowerInvariant(), out var value))
                 {
-                    // Convertir tipo primitivo si es necesario
-                    resolved.Add(Convert.ChangeType(value, param.ParameterType));
+                    var converted = Convert.ChangeType(value, param.ParameterType);
+                    resolved.Add(converted);
                 }
                 else
                 {
-                    resolved.Add(null); // O extender para [FromQuery]
+                    resolved.Add(null); // valor por defecto si no hay coincidencia
                 }
             }
 
             return resolved.ToArray();
         }
 
+        private void AddCorsHeaders(HttpListenerResponse response)
+        {
+            response.Headers["Access-Control-Allow-Origin"] = _corsAllowedOrigins;
+            response.Headers["Access-Control-Allow-Methods"] = _corsAllowedMethods;
+            response.Headers["Access-Control-Allow-Headers"] = _corsAllowedHeaders;
+            response.Headers["Access-Control-Allow-Credentials"] = "true";
+        }
+
         private async Task RespondWith(HttpListenerContext context, int statusCode, object value)
         {
-            context.Response.StatusCode = statusCode;
+            var response = context.Response;
+            response.StatusCode = statusCode;
+            AddCorsHeaders(response);
 
             try
             {

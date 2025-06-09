@@ -13,7 +13,7 @@ namespace AvalonFlowRest
 
             var server = new AvalonRestServer(port);
             // al iniciar el servidor
-            AvalonServiceRegistry.RegisterSingleton<EmailService>(new EmailService());
+            server.AddService<EmailService>();
 
             await server.StartAsync(); // Corre el servidor indefinidamente
         }
