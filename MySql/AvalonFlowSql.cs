@@ -75,15 +75,33 @@ namespace AvalonFlow.MySql
         public DataTable ExecuteQuery(string query, Dictionary<string, object>? parameters = null)
         {
             using var cmd = new MySqlCommand(query, _connection);
+
+            // Asignar parámetros
             if (parameters != null)
             {
                 foreach (var param in parameters)
-                    cmd.Parameters.AddWithValue(param.Key, param.Value ?? DBNull.Value);
+                {
+                    string paramName = param.Key.StartsWith("@") ? param.Key : "@" + param.Key;
+                    cmd.Parameters.AddWithValue(paramName, param.Value ?? DBNull.Value);
+                }
             }
 
-            using var adapter = new MySqlDataAdapter(cmd);
             var result = new DataTable();
-            adapter.Fill(result);
+
+            try
+            {
+                if (_connection.State != ConnectionState.Open)
+                    _connection.Open();
+
+                using var adapter = new MySqlDataAdapter(cmd);
+                adapter.Fill(result);
+            }
+            finally
+            {
+                if (_connection.State == ConnectionState.Open)
+                    _connection.Close();
+            }
+
             return result;
         }
 

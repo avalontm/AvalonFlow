@@ -303,6 +303,7 @@ namespace AvalonFlow.Rest
             {
                 var fromBody = param.GetCustomAttribute<FromBodyAttribute>() != null;
                 var fromHeader = param.GetCustomAttribute<FromHeaderAttribute>();
+                var fromQuery = param.GetCustomAttribute<FromQueryAttribute>();
 
                 if (fromBody)
                 {
@@ -347,6 +348,33 @@ namespace AvalonFlow.Rest
 
                     var converted = Convert.ChangeType(headerValue, param.ParameterType);
                     resolved.Add(converted);
+                }
+                else if (fromQuery != null)
+                {
+                    string queryName = fromQuery.Name ?? param.Name!;
+                    string? queryValue = context.Request.QueryString[queryName];
+
+                    if (string.IsNullOrWhiteSpace(queryValue))
+                    {
+                        if (param.HasDefaultValue)
+                        {
+                            resolved.Add(param.DefaultValue);
+                        }
+                        else if (param.ParameterType.IsValueType)
+                        {
+                            // Para tipos value types sin valor por defecto, agregar valor por defecto de tipo
+                            resolved.Add(Activator.CreateInstance(param.ParameterType));
+                        }
+                        else
+                        {
+                            resolved.Add(null);
+                        }
+                    }
+                    else
+                    {
+                        var converted = Convert.ChangeType(queryValue, param.ParameterType);
+                        resolved.Add(converted);
+                    }
                 }
                 else if (param.ParameterType == typeof(HttpListenerContext))
                 {
