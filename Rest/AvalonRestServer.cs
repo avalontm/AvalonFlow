@@ -14,7 +14,7 @@ namespace AvalonFlow.Rest
         private readonly string _corsAllowedMethods;
         private readonly string _corsAllowedHeaders;
 
-        public AvalonRestServer(int port, bool useHttps = false, string corsAllowedOrigins = "*", string corsAllowedMethods = "GET, POST, PUT, DELETE, OPTIONS", string corsAllowedHeaders = "Content-Type, Authorization")
+        public AvalonRestServer(int port = 5000, bool useHttps = false, string corsAllowedOrigins = "*", string corsAllowedMethods = "GET, POST, PUT, DELETE, OPTIONS", string corsAllowedHeaders = "Content-Type, Authorization")
         {
             _corsAllowedOrigins = corsAllowedOrigins;
             _corsAllowedMethods = corsAllowedMethods;
@@ -24,7 +24,7 @@ namespace AvalonFlow.Rest
             {
                 _listener = new HttpListener();
                 string scheme = useHttps ? "https" : "http";
-                _listener.Prefixes.Add($"{scheme}://localhost:{port}/");
+                _listener.Prefixes.Add($"{scheme}://+:{port}/");
 
                 RegisterControllersInAllAssemblies();
             }
@@ -116,18 +116,34 @@ namespace AvalonFlow.Rest
                 string method = context.Request.HttpMethod.ToUpperInvariant();
                 string[] segments = context.Request.Url.AbsolutePath.Trim('/').Split('/');
 
-                if (segments.Length < 2 || segments[0].ToLowerInvariant() != "api")
+                // Mejorar la lógica de parsing de rutas para manejar múltiples "api" en la URL
+                int apiIndex = -1;
+                for (int i = 0; i < segments.Length; i++)
                 {
-                    await RespondWith(context, 404, new { error = "Invalid route" });
+                    if (segments[i].Equals("api", StringComparison.OrdinalIgnoreCase))
+                    {
+                        apiIndex = i;
+                        break;
+                    }
+                }
+
+                if (apiIndex == -1 || apiIndex + 1 >= segments.Length)
+                {
+                    await RespondWith(context, 404, new { error = "Invalid route - API endpoint not found" });
                     return;
                 }
 
-                string controllerKey = $"{segments[0].ToLowerInvariant()}/{segments[1].ToLowerInvariant()}";
-                string subPath = "/" + string.Join("/", segments.Skip(2)).ToLowerInvariant();
+                // Usar el primer "api" encontrado como base
+                string controllerName = segments[apiIndex + 1].ToLowerInvariant();
+                string controllerKey = $"api/{controllerName}";
+
+                // Construir subPath con los segmentos restantes después del controlador
+                var remainingSegments = segments.Skip(apiIndex + 2);
+                string subPath = "/" + string.Join("/", remainingSegments).ToLowerInvariant();
 
                 if (!_controllers.TryGetValue(controllerKey, out var controllerType))
                 {
-                    await RespondWith(context, 404, new { error = "Controller not found" });
+                    await RespondWith(context, 404, new { error = $"Controller not found: {controllerKey}" });
                     return;
                 }
 
@@ -152,6 +168,17 @@ namespace AvalonFlow.Rest
 
                     var templateParts = attr.Path.Trim('/').Split('/');
                     var requestParts = subPath.Trim('/').Split('/');
+
+                    // Si subPath está vacío, requestParts tendrá un elemento vacío
+                    if (subPath.Trim('/') == string.Empty)
+                    {
+                        requestParts = new string[0];
+                    }
+
+                    if (templateParts.Length == 1 && templateParts[0] == string.Empty)
+                    {
+                        templateParts = new string[0];
+                    }
 
                     if (templateParts.Length != requestParts.Length) continue;
 
@@ -207,7 +234,7 @@ namespace AvalonFlow.Rest
                         return;
                     }
 
-                    string? authHeader = context.Request.Headers["Authorization"];
+                    string? authHeader = GetHeaderValue(context.Request, "Authorization");
 
                     if (string.IsNullOrEmpty(authHeader) || !authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
                     {
@@ -287,107 +314,236 @@ namespace AvalonFlow.Rest
             }
         }
 
+        // Método mejorado para obtener headers de manera más robusta
+        private string? GetHeaderValue(HttpListenerRequest request, string headerName)
+        {
+            try
+            {
+                // Método 1: Acceso directo
+                var headerValue = request.Headers[headerName];
+                if (!string.IsNullOrEmpty(headerValue))
+                {
+                    return headerValue;
+                }
+
+                // Método 2: Búsqueda case-insensitive usando AllKeys
+                if (request.Headers.AllKeys != null)
+                {
+                    foreach (string key in request.Headers.AllKeys)
+                    {
+                        if (string.Equals(key, headerName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            var value = request.Headers[key];
+                            return value;
+                        }
+                    }
+                }
+
+                // Método 3: Búsqueda usando GetKey/Get
+                for (int i = 0; i < request.Headers.Count; i++)
+                {
+                    string key = request.Headers.GetKey(i);
+                    if (string.Equals(key, headerName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        var value = request.Headers.Get(i);
+                        return value;
+                    }
+                }
+
+                // Método 4: Búsqueda con variaciones comunes del nombre
+                var headerVariations = new[] {
+            headerName.ToLowerInvariant(),
+            headerName.ToUpperInvariant(),
+            headerName.Replace("_", "-"),
+            headerName.Replace("-", "_"),
+            $"X-{headerName}",
+            $"x-{headerName}",
+            headerName.Replace("_", "-").ToLowerInvariant(),
+            headerName.Replace("-", "_").ToLowerInvariant()
+        };
+
+                foreach (var variation in headerVariations)
+                {
+                    var value = request.Headers[variation];
+                    if (!string.IsNullOrEmpty(value))
+                    {
+                        return value;
+                    }
+                }
+
+                return null;
+            }
+            catch (Exception ex)
+            {
+                AvalonFlowInstance.Log($"Error getting header '{headerName}': {ex.Message}");
+                return null;
+            }
+        }
+
+
         private async Task<object[]> ResolveParameters(MethodInfo method, HttpListenerContext context, Dictionary<string, string> routeParams)
         {
             var parameters = method.GetParameters();
             var resolved = new List<object>();
 
-            string body = null;
+            string? body = null;
             if (context.Request.HasEntityBody)
             {
-                using var reader = new StreamReader(context.Request.InputStream);
-                body = await reader.ReadToEndAsync();
+                try
+                {
+                    using var reader = new StreamReader(context.Request.InputStream);
+                    body = await reader.ReadToEndAsync();
+                }
+                catch (Exception ex)
+                {
+                    AvalonFlowInstance.Log($"Error reading request body: {ex.Message}");
+                }
             }
 
             foreach (var param in parameters)
             {
-                var fromBody = param.GetCustomAttribute<FromBodyAttribute>() != null;
-                var fromHeader = param.GetCustomAttribute<FromHeaderAttribute>();
-                var fromQuery = param.GetCustomAttribute<FromQueryAttribute>();
-
-                if (fromBody)
+                try
                 {
-                    if (string.IsNullOrEmpty(body))
+                    var fromBody = param.GetCustomAttribute<FromBodyAttribute>() != null;
+                    var fromHeader = param.GetCustomAttribute<FromHeaderAttribute>();
+                    var fromQuery = param.GetCustomAttribute<FromQueryAttribute>();
+
+                    if (fromBody)
                     {
-                        resolved.Add(null);
-                        continue;
+                        if (string.IsNullOrEmpty(body))
+                        {
+                            if (param.HasDefaultValue)
+                            {
+                                resolved.Add(param.DefaultValue);
+                            }
+                            else
+                            {
+                                resolved.Add(null);
+                            }
+                            continue;
+                        }
+
+                        if (param.ParameterType == typeof(JsonElement))
+                        {
+                            var jsonDoc = JsonDocument.Parse(body);
+                            var root = jsonDoc.RootElement;
+
+                            if (root.ValueKind != JsonValueKind.Object)
+                                throw new InvalidOperationException("Invalid JSON format: expected a JSON object.");
+
+                            resolved.Add(root);
+                        }
+                        else
+                        {
+                            var deserialized = JsonSerializer.Deserialize(body, param.ParameterType, new JsonSerializerOptions
+                            {
+                                PropertyNameCaseInsensitive = true
+                            });
+
+                            if (deserialized == null)
+                                throw new InvalidOperationException("Invalid JSON format: could not deserialize the object.");
+
+                            resolved.Add(deserialized);
+                        }
                     }
-
-                    if (param.ParameterType == typeof(JsonElement))
+                    else if (fromHeader != null)
                     {
-                        var jsonDoc = JsonDocument.Parse(body);
-                        var root = jsonDoc.RootElement;
+                        string headerName = fromHeader.Name ?? param.Name!;
+                        string? headerValue = GetHeaderValue(context.Request, headerName);
 
-                        if (root.ValueKind != JsonValueKind.Object)
-                            throw new InvalidOperationException("Invalid JSON format: expected a JSON object.");
 
-                        resolved.Add(root);
+                        if (string.IsNullOrWhiteSpace(headerValue))
+                        {
+                            if (param.HasDefaultValue)
+                            {
+                                resolved.Add(param.DefaultValue);
+                            }
+                            else
+                            {
+                                AvalonFlowInstance.Log($"ERROR: Header '{headerName}' is required but not found");
+                                throw new InvalidOperationException($"Missing required header: '{headerName}'");
+                            }
+                        }
+                        else
+                        {
+                            try
+                            {
+                                var converted = Convert.ChangeType(headerValue, param.ParameterType);
+                                resolved.Add(converted);
+                            }
+                            catch (Exception ex)
+                            {
+                                AvalonFlowInstance.Log($"ERROR: Cannot convert header '{headerName}' value '{headerValue}' to type '{param.ParameterType.Name}': {ex.Message}");
+                                throw new InvalidOperationException($"Cannot convert header '{headerName}' value '{headerValue}' to type '{param.ParameterType.Name}': {ex.Message}");
+                            }
+                        }
+                    }
+                    else if (fromQuery != null)
+                    {
+                        string queryName = fromQuery.Name ?? param.Name!;
+                        string? queryValue = context.Request.QueryString[queryName];
+
+                        if (string.IsNullOrWhiteSpace(queryValue))
+                        {
+                            if (param.HasDefaultValue)
+                            {
+                                resolved.Add(param.DefaultValue);
+                            }
+                            else if (param.ParameterType.IsValueType)
+                            {
+                                // Para tipos value types sin valor por defecto, agregar valor por defecto de tipo
+                                resolved.Add(Activator.CreateInstance(param.ParameterType));
+                            }
+                            else
+                            {
+                                resolved.Add(null);
+                            }
+                        }
+                        else
+                        {
+                            try
+                            {
+                                var converted = Convert.ChangeType(queryValue, param.ParameterType);
+                                resolved.Add(converted);
+                            }
+                            catch (Exception ex)
+                            {
+                                throw new InvalidOperationException($"Cannot convert query parameter '{queryName}' value '{queryValue}' to type '{param.ParameterType.Name}': {ex.Message}");
+                            }
+                        }
+                    }
+                    else if (param.ParameterType == typeof(HttpListenerContext))
+                    {
+                        resolved.Add(context);
+                    }
+                    else if (routeParams.TryGetValue(param.Name!.ToLowerInvariant(), out var value))
+                    {
+                        try
+                        {
+                            var converted = Convert.ChangeType(value, param.ParameterType);
+                            resolved.Add(converted);
+                        }
+                        catch (Exception ex)
+                        {
+                            throw new InvalidOperationException($"Cannot convert route parameter '{param.Name}' value '{value}' to type '{param.ParameterType.Name}': {ex.Message}");
+                        }
                     }
                     else
-                    {
-                        var deserialized = JsonSerializer.Deserialize(body, param.ParameterType, new JsonSerializerOptions
-                        {
-                            PropertyNameCaseInsensitive = true
-                        });
-
-                        if (deserialized == null)
-                            throw new InvalidOperationException("Invalid JSON format: could not deserialize the object.");
-
-                        resolved.Add(deserialized);
-                    }
-                }
-                else if (fromHeader != null)
-                {
-                    string headerName = fromHeader.Name ?? param.Name!;
-                    string? headerValue = context.Request.Headers[headerName];
-
-                    if (string.IsNullOrWhiteSpace(headerValue))
-                    {
-                        throw new InvalidOperationException($"Missing required header: '{headerName}'");
-                    }
-
-                    var converted = Convert.ChangeType(headerValue, param.ParameterType);
-                    resolved.Add(converted);
-                }
-                else if (fromQuery != null)
-                {
-                    string queryName = fromQuery.Name ?? param.Name!;
-                    string? queryValue = context.Request.QueryString[queryName];
-
-                    if (string.IsNullOrWhiteSpace(queryValue))
                     {
                         if (param.HasDefaultValue)
                         {
                             resolved.Add(param.DefaultValue);
                         }
-                        else if (param.ParameterType.IsValueType)
-                        {
-                            // Para tipos value types sin valor por defecto, agregar valor por defecto de tipo
-                            resolved.Add(Activator.CreateInstance(param.ParameterType));
-                        }
                         else
                         {
-                            resolved.Add(null);
+                            resolved.Add(null); // valor por defecto si no hay coincidencia
                         }
                     }
-                    else
-                    {
-                        var converted = Convert.ChangeType(queryValue, param.ParameterType);
-                        resolved.Add(converted);
-                    }
                 }
-                else if (param.ParameterType == typeof(HttpListenerContext))
+                catch (Exception ex)
                 {
-                    resolved.Add(context);
-                }
-                else if (routeParams.TryGetValue(param.Name!.ToLowerInvariant(), out var value))
-                {
-                    var converted = Convert.ChangeType(value, param.ParameterType);
-                    resolved.Add(converted);
-                }
-                else
-                {
-                    resolved.Add(null); // valor por defecto si no hay coincidencia
+                    AvalonFlowInstance.Log($"Error resolving parameter '{param.Name}': {ex.Message}");
+                    throw;
                 }
             }
 
@@ -443,15 +599,21 @@ namespace AvalonFlow.Rest
                     await context.Response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
                 }
             }
-            catch
+            catch (Exception ex)
             {
-
+                AvalonFlowInstance.Log($"Error writing response: {ex.Message}");
             }
             finally
             {
-                context.Response.Close();
+                try
+                {
+                    context.Response.Close();
+                }
+                catch
+                {
+                    // Ignorar errores al cerrar la respuesta
+                }
             }
         }
-
     }
 }
