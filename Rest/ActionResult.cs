@@ -11,5 +11,4 @@
             Value = value;
         }
     }
-
 }
