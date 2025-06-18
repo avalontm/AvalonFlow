@@ -10,7 +10,7 @@ namespace AvalonFlow.Websocket
         /// </summary>
         /// <param name="token">The token to authenticate.</param>
         /// <returns>True if authentication is successful.</returns>
-        Task<bool> AuthenticateAsync(SocketWebServer client, string token);
+        Task<bool> AuthenticateAsync(SocketWebServer client, string token, string parameters = "");
 
         /// <summary>
         /// Invoked when a new connection is established.

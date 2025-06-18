@@ -38,7 +38,7 @@ namespace AvalonFlow.Websocket
                     throw new ArgumentOutOfRangeException(nameof(port), "Port must be between 1 and 65535.");
 
                 string scheme = useHttps ? "https" : "http";
-                string prefix = $"{scheme}://+:{port}/{path.Trim('/')}/";
+                string prefix = $"{scheme}://*:{port}/{path.Trim('/')}/";
 
                 _listener.Prefixes.Add(prefix);
                 _handlerInstance = handlerInstance ?? new AvalonFlowServerDefaultEventHandler();
@@ -83,6 +83,7 @@ namespace AvalonFlow.Websocket
                 }
 
                 _listener.Stop();
+                AvalonFlowInstance.Log($"WebSocket stoped");
             }
             catch (HttpListenerException ex)
             {
@@ -135,7 +136,9 @@ namespace AvalonFlow.Websocket
                                     await Task.Delay(100);
                                     SocketWebServer client = new SocketWebServer(webSocket);
                                     string token = dataElement.GetString() ?? "";
-                                    bool isAuth = await _eventHandler.AuthenticateAsync(client, token);
+                                    doc.RootElement.TryGetProperty("parameters", out var dataParameters);
+                                    string parameters = dataParameters.GetString() ?? "";
+                                    bool isAuth = await _eventHandler.AuthenticateAsync(client, token, parameters);
 
                                     if (!isAuth)
                                     {
@@ -150,10 +153,6 @@ namespace AvalonFlow.Websocket
 
                                     // Llamar evento
                                     await _handlerInstance.OnConnectedAsync(client);
-
-                                    var authSuccessMsg = JsonSerializer.Serialize(new { action = "authenticated", data = "success" });
-                                    var authBuffer = Encoding.UTF8.GetBytes(authSuccessMsg);
-                                    await webSocket.SendAsync(authBuffer, WebSocketMessageType.Text, true, CancellationToken.None);
 
                                     continue;
                                 }

@@ -1,4 +1,6 @@
 ﻿using System.Net;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Reflection;
 using System.Security.Claims;
 using System.Text;
@@ -27,7 +29,9 @@ namespace AvalonFlow.Rest
                 _port = port;
                 _listener = new HttpListener();
                 string scheme = useHttps ? "https" : "http";
-                _listener.Prefixes.Add($"{scheme}://+:{port}/");
+
+                // Usar * para escuchar en todas las interfaces (equivalente a 0.0.0.0)
+                _listener.Prefixes.Add($"{scheme}://*:{port}/");
 
                 RegisterControllersInAllAssemblies();
             }
@@ -35,6 +39,92 @@ namespace AvalonFlow.Rest
             {
                 AvalonFlowInstance.Log($"Error initializing server: {ex.Message}");
                 throw;
+            }
+        }
+
+        private void LogServerAddresses()
+        {
+            try
+            {
+                string hostName = Dns.GetHostName();
+                IPAddress[] hostAddresses = Dns.GetHostAddresses(hostName);
+                var activeListeners = IPGlobalProperties.GetIPGlobalProperties().GetActiveTcpListeners();
+
+                AvalonFlowInstance.Log($"Host: {hostName}");
+                AvalonFlowInstance.Log("Direcciones IP locales:");
+
+                foreach (var ip in hostAddresses)
+                {
+                    if (ip.AddressFamily == AddressFamily.InterNetwork) // IPv4
+                    {
+                        AvalonFlowInstance.Log($"- {ip}");
+                    }
+                }
+
+                AvalonFlowInstance.Log("\nInterfaces de red activas:");
+                foreach (NetworkInterface ni in NetworkInterface.GetAllNetworkInterfaces())
+                {
+                    if (ni.OperationalStatus == OperationalStatus.Up)
+                    {
+                        AvalonFlowInstance.Log($"- {ni.Name} ({ni.Description})");
+                        foreach (UnicastIPAddressInformation ip in ni.GetIPProperties().UnicastAddresses)
+                        {
+                            if (ip.Address.AddressFamily == AddressFamily.InterNetwork)
+                            {
+                                AvalonFlowInstance.Log($"  - {ip.Address}");
+                            }
+                        }
+                    }
+                }
+
+                AvalonFlowInstance.Log("\nPuertos escuchando:");
+                foreach (var listener in activeListeners)
+                {
+                    if (listener.Port == _port)
+                    {
+                        AvalonFlowInstance.Log($"- {listener.Address}:{listener.Port} ({(listener.Address.Equals(IPAddress.Any) ? "PÚBLICO (0.0.0.0)" : (listener.Address.Equals(IPAddress.Loopback) ? "LOCALHOST" : "INTERFAZ ESPECÍFICA"))})");
+                    }
+                }
+
+                CheckPublicAccessibility();
+            }
+            catch (Exception ex)
+            {
+                AvalonFlowInstance.Log($"Error al registrar direcciones: {ex.Message}");
+            }
+        }
+
+        private void CheckPublicAccessibility()
+        {
+            try
+            {
+                bool isPublic = false;
+                var activeListeners = IPGlobalProperties.GetIPGlobalProperties().GetActiveTcpListeners();
+
+                foreach (var listener in activeListeners)
+                {
+                    if (listener.Port == _port && listener.Address.Equals(IPAddress.Any))
+                    {
+                        isPublic = true;
+                        break;
+                    }
+                }
+
+                if (isPublic)
+                {
+                    AvalonFlowInstance.Log("\nESTADO DE ACCESO: PÚBLICO (0.0.0.0)");
+                    AvalonFlowInstance.Log("El servidor está configurado para aceptar conexiones desde cualquier red.");
+                    AvalonFlowInstance.Log("ADVERTENCIA: Asegúrate de tener protección adecuada (firewall, autenticación)");
+                }
+                else
+                {
+                    AvalonFlowInstance.Log("\nESTADO DE ACCESO: PRIVADO");
+                    AvalonFlowInstance.Log("El servidor solo acepta conexiones locales o de interfaces específicas.");
+                }
+            }
+            catch (Exception ex)
+            {
+                AvalonFlowInstance.Log($"Error al verificar accesibilidad pública: {ex.Message}");
             }
         }
 
@@ -78,7 +168,7 @@ namespace AvalonFlow.Rest
             try
             {
                 _listener.Start();
-                AvalonFlowInstance.Log($"REST server started | Port: {_port}");
+                LogServerAddresses();
 
                 while (!ct.IsCancellationRequested)
                 {

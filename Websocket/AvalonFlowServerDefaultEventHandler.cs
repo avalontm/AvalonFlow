@@ -51,7 +51,7 @@ namespace AvalonFlow.Websocket
             return Task.CompletedTask;
         }
 
-        public async Task<bool> AuthenticateAsync(SocketWebServer client, string token)
+        public async Task<bool> AuthenticateAsync(SocketWebServer client, string token, string parameters = "")
         {
             var tokenHandler = new JwtSecurityTokenHandler();
             var key = Encoding.UTF8.GetBytes(AvalonFlowInstance.JwtSecretKey);
