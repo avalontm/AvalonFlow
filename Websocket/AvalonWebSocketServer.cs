@@ -83,7 +83,7 @@ namespace AvalonFlow.Websocket
                 }
 
                 _listener.Stop();
-                AvalonFlowInstance.Log($"WebSocket stoped");
+                AvalonFlowInstance.Log($"WebSocket stopped");
             }
             catch (HttpListenerException ex)
             {
@@ -99,7 +99,7 @@ namespace AvalonFlow.Websocket
         {
             WebSocket webSocket = null;
             string socketId = null;
-            bool authenticated = false;
+            SocketWebServer client = null;
 
             try
             {
@@ -130,14 +130,14 @@ namespace AvalonFlow.Websocket
 
                             if (_handlerInstance is IAvalonFlowServerSocket _eventHandler)
                             {
-                                if (action == "authenticate" && !authenticated)
+                                // Manejo de autenticación (solo la primera vez)
+                                if (action == "authenticate" && client == null)
                                 {
-                                    // Delay para esperar el token del cliente
-                                    await Task.Delay(100);
-                                    SocketWebServer client = new SocketWebServer(webSocket);
+                                    client = new SocketWebServer(webSocket);
                                     string token = dataElement.GetString() ?? "";
                                     doc.RootElement.TryGetProperty("parameters", out var dataParameters);
                                     string parameters = dataParameters.GetString() ?? "";
+
                                     bool isAuth = await _eventHandler.AuthenticateAsync(client, token, parameters);
 
                                     if (!isAuth)
@@ -146,80 +146,53 @@ namespace AvalonFlow.Websocket
                                         return;
                                     }
 
-                                    socketId = client?.SocketId;
+                                    socketId = client.SocketId;
+
                                     // Registrar el cliente
-                                    authenticated = client?.IsAuthenticated ?? false;
                                     _clients[socketId] = client;
 
-                                    // Llamar evento
+                                    // Llamar evento de conexión
                                     await _handlerInstance.OnConnectedAsync(client);
+
+                                    // Enviar confirmación de autenticación
+                                    await SendToClientAsync(socketId, "authenticated", new { success = true, socketId = socketId });
 
                                     continue;
                                 }
 
-                                if (!authenticated)
+                                // Verificar que el cliente esté autenticado
+                                if (client == null || !client.IsAuthenticated)
                                 {
                                     AvalonFlowInstance.Log("Client sent message before authentication.");
                                     await webSocket.CloseAsync(WebSocketCloseStatus.PolicyViolation, "Not authenticated", CancellationToken.None);
                                     return;
                                 }
 
+                                // Procesar mensaje recibido
                                 await _eventHandler.OnMessageReceivedAsync(doc.RootElement);
 
+                                // Ejecutar handler específico si existe
                                 if (action != null && _handlers.TryGetValue(action, out var method))
                                 {
-                                    if (!string.IsNullOrEmpty(socketId) && _clients.TryGetValue(socketId, out var client))
+                                    try
                                     {
-                                        try
-                                        {
-                                            var parameters = method.GetParameters();
-                                            object?[] args;
-
-                                            if (parameters.Length == 3 &&
-                                                parameters[0].ParameterType == typeof(AvalonWebSocketServer) &&
-                                                parameters[1].ParameterType == typeof(SocketWebServer) &&
-                                                parameters[2].ParameterType == typeof(JsonElement))
-                                            {
-                                                args = new object[] { this, client, dataElement };
-                                            }
-                                            else if (parameters.Length == 2 &&
-                                                     parameters[0].ParameterType == typeof(SocketWebServer) &&
-                                                     parameters[1].ParameterType == typeof(JsonElement))
-                                            {
-                                                args = new object[] { client, dataElement };
-                                            }
-                                            else if (parameters.Length == 1 &&
-                                                     parameters[0].ParameterType == typeof(JsonElement))
-                                            {
-                                                args = new object[] { dataElement };
-                                            }
-                                            else
-                                            {
-                                                AvalonFlowInstance.Log($"Unsupported parameter signature for handler '{action}'.");
-                                                return;
-                                            }
-
-                                            var invokeResult = method.Invoke(_handlerInstance, args);
-
-                                            if (invokeResult is Task task)
-                                            {
-                                                await task;
-                                            }
-                                        }
-                                        catch (Exception ex)
-                                        {
-                                            if (_handlerInstance is IAvalonFlowServerSocket eventHandlerErr)
-                                            {
-                                                await eventHandlerErr.OnErrorAsync(ex);
-                                            }
-                                        }
+                                        await ExecuteHandlerMethod(method, client, dataElement);
                                     }
-                                    else
+                                    catch (Exception ex)
                                     {
-                                        AvalonFlowInstance.Log("Client not found or not authenticated.");
+                                        AvalonFlowInstance.Log($"Error executing handler '{action}': {ex.Message}");
+                                        await _eventHandler.OnErrorAsync(ex);
                                     }
                                 }
                             }
+                        }
+                    }
+                    catch (JsonException ex)
+                    {
+                        AvalonFlowInstance.Log($"Invalid JSON received: {ex.Message}");
+                        if (_handlerInstance is IAvalonFlowServerSocket eventHandlerErr)
+                        {
+                            await eventHandlerErr.OnErrorAsync(ex);
                         }
                     }
                     catch (Exception ex)
@@ -233,6 +206,7 @@ namespace AvalonFlow.Websocket
             }
             catch (Exception ex)
             {
+                AvalonFlowInstance.Log($"Connection error: {ex.Message}");
                 if (_handlerInstance is IAvalonFlowServerSocket eventHandlerErr)
                 {
                     await eventHandlerErr.OnErrorAsync(ex);
@@ -240,25 +214,120 @@ namespace AvalonFlow.Websocket
             }
             finally
             {
+                // Limpieza cuando se cierra la conexión
                 if (!string.IsNullOrEmpty(socketId))
                 {
                     _clients.TryRemove(socketId, out _);
+
+                    // Remover de todos los grupos
+                    if (client != null)
+                    {
+                        RemoveClientFromAllGroups(client);
+
+                        // Llamar evento de desconexión
+                        if (_handlerInstance != null)
+                        {
+                            try
+                            {
+                                await _handlerInstance.OnDisconnectedAsync(client);
+                            }
+                            catch (Exception ex)
+                            {
+                                AvalonFlowInstance.Log($"Error in OnDisconnectedAsync: {ex.Message}");
+                            }
+                        }
+                    }
                 }
 
                 if (webSocket != null && webSocket.State == WebSocketState.Open)
-                    await webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Server closing connection", CancellationToken.None);
+                {
+                    try
+                    {
+                        await webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Server closing connection", CancellationToken.None);
+                    }
+                    catch (Exception ex)
+                    {
+                        AvalonFlowInstance.Log($"Error closing WebSocket: {ex.Message}");
+                    }
+                }
             }
         }
 
+        private async Task ExecuteHandlerMethod(MethodInfo method, SocketWebServer client, JsonElement dataElement)
+        {
+            var parameters = method.GetParameters();
+            object?[] args;
+
+            if (parameters.Length == 3 &&
+                parameters[0].ParameterType == typeof(AvalonWebSocketServer) &&
+                parameters[1].ParameterType == typeof(SocketWebServer) &&
+                parameters[2].ParameterType == typeof(JsonElement))
+            {
+                args = new object[] { this, client, dataElement };
+            }
+            else if (parameters.Length == 2 &&
+                     parameters[0].ParameterType == typeof(SocketWebServer) &&
+                     parameters[1].ParameterType == typeof(JsonElement))
+            {
+                args = new object[] { client, dataElement };
+            }
+            else if (parameters.Length == 1 &&
+                     parameters[0].ParameterType == typeof(JsonElement))
+            {
+                args = new object[] { dataElement };
+            }
+            else
+            {
+                throw new InvalidOperationException($"Unsupported parameter signature for handler method.");
+            }
+
+            var invokeResult = method.Invoke(_handlerInstance, args);
+
+            if (invokeResult is Task task)
+            {
+                await task;
+            }
+        }
+
+        private void RemoveClientFromAllGroups(SocketWebServer client)
+        {
+            var groupsToRemove = new List<string>();
+
+            foreach (var group in _groups)
+            {
+                if (group.Value.Contains(client))
+                {
+                    group.Value.Remove(client);
+                    if (group.Value.Count == 0)
+                    {
+                        groupsToRemove.Add(group.Key);
+                    }
+                }
+            }
+
+            foreach (var groupId in groupsToRemove)
+            {
+                _groups.TryRemove(groupId, out _);
+            }
+        }
 
         // Enviar a un cliente específico
         public async Task SendToClientAsync(string socketId, string action, object data)
         {
             if (_clients.TryGetValue(socketId, out var client) && client.IsConnected)
             {
-                var msg = JsonSerializer.Serialize(new { action, data });
-                var buffer = Encoding.UTF8.GetBytes(msg);
-                await client.webSocket.SendAsync(buffer, WebSocketMessageType.Text, true, CancellationToken.None);
+                try
+                {
+                    var msg = JsonSerializer.Serialize(new { action, data });
+                    var buffer = Encoding.UTF8.GetBytes(msg);
+                    await client.webSocket.SendAsync(buffer, WebSocketMessageType.Text, true, CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    AvalonFlowInstance.Log($"Error sending message to client {socketId}: {ex.Message}");
+                    // Remover cliente si hay error de envío
+                    _clients.TryRemove(socketId, out _);
+                }
             }
         }
 
@@ -267,13 +336,32 @@ namespace AvalonFlow.Websocket
         {
             var msg = JsonSerializer.Serialize(new { action, data });
             var buffer = Encoding.UTF8.GetBytes(msg);
+            var clientsToRemove = new List<string>();
 
-            foreach (var client in _clients.Values)
+            foreach (var kvp in _clients)
             {
-                if (client.IsConnected)
+                try
                 {
-                    await client.webSocket.SendAsync(buffer, WebSocketMessageType.Text, true, CancellationToken.None);
+                    if (kvp.Value.IsConnected)
+                    {
+                        await kvp.Value.webSocket.SendAsync(buffer, WebSocketMessageType.Text, true, CancellationToken.None);
+                    }
+                    else
+                    {
+                        clientsToRemove.Add(kvp.Key);
+                    }
                 }
+                catch (Exception ex)
+                {
+                    AvalonFlowInstance.Log($"Error broadcasting to client {kvp.Key}: {ex.Message}");
+                    clientsToRemove.Add(kvp.Key);
+                }
+            }
+
+            // Remover clientes desconectados
+            foreach (var clientId in clientsToRemove)
+            {
+                _clients.TryRemove(clientId, out _);
             }
         }
 
@@ -282,37 +370,94 @@ namespace AvalonFlow.Websocket
         {
             if (_groups.TryGetValue(groupId, out var users))
             {
-                foreach (SocketWebServer socket in users)
+                var msg = JsonSerializer.Serialize(new { action, data });
+                var buffer = Encoding.UTF8.GetBytes(msg);
+                var usersToRemove = new List<SocketWebServer>();
+
+                foreach (var socket in users.ToList()) // ToList para evitar modificación durante iteración
                 {
-                    await SendToClientAsync(socket.UserId, action, data);
+                    try
+                    {
+                        if (socket.IsConnected)
+                        {
+                            await socket.webSocket.SendAsync(buffer, WebSocketMessageType.Text, true, CancellationToken.None);
+                        }
+                        else
+                        {
+                            usersToRemove.Add(socket);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        AvalonFlowInstance.Log($"Error sending to group member: {ex.Message}");
+                        usersToRemove.Add(socket);
+                    }
                 }
-            }
-        }
 
-        // Agregar usuario a grupo
-        public void AddToGroup(string groupId, SocketWebServer socket)
-        {
-            _groups.AddOrUpdate(groupId,
-                _ => new List<SocketWebServer> { socket },
-                (_, list) =>
+                // Remover usuarios desconectados del grupo
+                foreach (var user in usersToRemove)
                 {
-                    if (!list.Contains(socket))
-                        list.Add(socket);
-                    return list;
-                });
-        }
+                    users.Remove(user);
+                }
 
-        // Remover usuario de grupo
-        public void RemoveFromGroup(string groupId, SocketWebServer socket)
-        {
-            if (_groups.TryGetValue(groupId, out var list))
-            {
-                list.Remove(socket);
-                if (list.Count == 0)
+                // Si el grupo queda vacío, eliminarlo
+                if (users.Count == 0)
                 {
                     _groups.TryRemove(groupId, out _);
                 }
             }
         }
+
+        // Agregar usuario a grupo
+        public bool AddToGroup(string groupId, SocketWebServer socket)
+        {
+            try
+            {
+                _groups.AddOrUpdate(groupId,
+                    _ => new List<SocketWebServer> { socket },
+                    (_, list) =>
+                    {
+                        if (!list.Contains(socket))
+                            list.Add(socket);
+                        return list;
+                    });
+                return true;
+            }
+            catch (Exception ex)
+            {
+                AvalonFlowInstance.Log($"Error adding to group {groupId}: {ex.Message}");
+                return false;
+            }
+        }
+
+        // Remover usuario de grupo
+        public bool RemoveFromGroup(string groupId, SocketWebServer socket)
+        {
+            try
+            {
+                if (_groups.TryGetValue(groupId, out var list))
+                {
+                    bool isRemoved = list.Remove(socket);
+                    if (list.Count == 0)
+                    {
+                        _groups.TryRemove(groupId, out _);
+                    }
+                    return isRemoved;
+                }
+                return false;
+            }
+            catch (Exception ex)
+            {
+                AvalonFlowInstance.Log($"Error removing from group {groupId}: {ex.Message}");
+                return false;
+            }
+        }
+
+        // Métodos de utilidad
+        public int GetConnectedClientsCount() => _clients.Count;
+
+        public IEnumerable<string> GetConnectedClientIds() => _clients.Keys.ToList();
+
+        public bool IsClientConnected(string socketId) => _clients.ContainsKey(socketId) && _clients[socketId].IsConnected;
     }
 }
