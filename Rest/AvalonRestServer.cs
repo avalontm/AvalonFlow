@@ -11,12 +11,21 @@ namespace AvalonFlow.Rest
 {
     public class AvalonRestServer
     {
+        private readonly RateLimiter _rateLimiter = new RateLimiter(100, TimeSpan.FromMinutes(1)); // 100 peticiones/minuto
         private readonly HttpListener _listener;
         private readonly Dictionary<string, Type> _controllers = new();
         private readonly string _corsAllowedOrigins;
         private readonly string _corsAllowedMethods;
         private readonly string _corsAllowedHeaders;
         private int _port;
+        private int _maxBodySize = 10;
+
+
+        public int MaxBodySize
+        {
+            get { return _maxBodySize; }
+            set { _maxBodySize = value; }
+        }
 
         public AvalonRestServer(int port = 5000, bool useHttps = false, string corsAllowedOrigins = "*", string corsAllowedMethods = "GET, POST, PUT, DELETE, OPTIONS", string corsAllowedHeaders = "Content-Type, Authorization")
         {
@@ -193,8 +202,19 @@ namespace AvalonFlow.Rest
 
         private async Task HandleRequestAsync(HttpListenerContext context)
         {
+            var startTime = DateTime.UtcNow;
             try
-            {
+            { 
+                // Obtener IP del cliente
+                var clientIp = context.Request.RemoteEndPoint?.Address?.ToString() ?? "unknown";
+
+                // Verificar rate limiting
+                if (!_rateLimiter.IsAllowed(clientIp))
+                {
+                    await RespondWith(context, 429, new { error = "Too many requests. Please try again later." });
+                    return;
+                }
+
                 var request = context.Request;
                 var response = context.Response;
 
@@ -406,6 +426,11 @@ namespace AvalonFlow.Rest
                 AvalonFlowInstance.Log($"Error: {ex}");
                 await RespondWith(context, 500, new { error = "Internal server error" });
             }
+            finally
+            {
+                var duration = DateTime.UtcNow - startTime;
+                LogRequest(context.Request, context.Response, duration);
+            }
         }
 
         // Método mejorado para obtener headers de manera más robusta
@@ -476,6 +501,13 @@ namespace AvalonFlow.Rest
 
         private async Task<object[]> ResolveParameters(MethodInfo method, HttpListenerContext context, Dictionary<string, string> routeParams)
         {
+            int maxBodySize = _maxBodySize * 1024 * 1024;
+
+            if (context.Request.ContentLength64 > maxBodySize)
+            {
+                throw new InvalidOperationException($"Request body too large. Maximum allowed is {maxBodySize} bytes.");
+            }
+
             var parameters = method.GetParameters();
             var resolved = new List<object>();
 
@@ -902,6 +934,17 @@ namespace AvalonFlow.Rest
             return Convert.ChangeType(value, targetType);
         }
 
+        private void AddSecurityHeaders(HttpListenerResponse response)
+        {
+            response.Headers.Add("X-Content-Type-Options", "nosniff");
+            response.Headers.Add("X-Frame-Options", "DENY");
+            response.Headers.Add("X-XSS-Protection", "1; mode=block");
+            response.Headers.Add("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+            response.Headers.Add("Content-Security-Policy", "default-src 'self'");
+            response.Headers.Add("Referrer-Policy", "no-referrer");
+            response.Headers.Add("Permissions-Policy", "geolocation=(), microphone=()");
+        }
+
         private void AddCorsHeaders(HttpListenerResponse response)
         {
             response.Headers["Access-Control-Allow-Origin"] = _corsAllowedOrigins;
@@ -912,8 +955,11 @@ namespace AvalonFlow.Rest
 
         private async Task RespondWith(HttpListenerContext context, int statusCode, object value)
         {
+            AddSecurityHeaders(context.Response);
+
             var response = context.Response;
             response.StatusCode = statusCode;
+          
             AddCorsHeaders(response);
 
             try
@@ -966,6 +1012,24 @@ namespace AvalonFlow.Rest
                     // Ignorar errores al cerrar la respuesta
                 }
             }
+        }
+
+        private void LogRequest(HttpListenerRequest request, HttpListenerResponse response, TimeSpan duration)
+        {
+            var logEntry = new
+            {
+                Timestamp = DateTime.UtcNow,
+                ClientIP = request.RemoteEndPoint?.Address?.ToString(),
+                Method = request.HttpMethod,
+                Url = request.Url?.AbsoluteUri,
+                StatusCode = response.StatusCode,
+                DurationMs = duration.TotalMilliseconds,
+                UserAgent = request.UserAgent,
+                ContentLength = request.ContentLength64,
+                Headers = request.Headers.AllKeys.ToDictionary(k => k, k => request.Headers[k])
+            };
+
+            AvalonFlowInstance.Log(JsonSerializer.Serialize(logEntry));
         }
     }
 }
