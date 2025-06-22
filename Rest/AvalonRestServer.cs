@@ -393,7 +393,9 @@ namespace AvalonFlow.Rest
 
                     if (result is Task task)
                     {
-                        await task;
+                        await task; // Espera indefinida
+
+                        // Obtener resultado si es genérico
                         result = task.GetType().IsGenericType
                             ? task.GetType().GetProperty("Result")?.GetValue(task)
                             : null;
