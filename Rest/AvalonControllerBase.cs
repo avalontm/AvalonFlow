@@ -1,8 +1,11 @@
-﻿namespace AvalonFlow.Rest
+﻿using System.Text;
+
+namespace AvalonFlow.Rest
 {
     public abstract class AvalonControllerBase : IAvalonController
     {
         public AvalonHttpContext HttpContext { get; internal set; } = null!;
+
         public T GetService<T>() where T : class
         {
             return AvalonServiceRegistry.Resolve<T>();
@@ -14,6 +17,11 @@
         protected ActionResult InternalServerError(string message = "Internal Server Error") => new(500, new { error = message });
         protected ActionResult Unauthorized(string message = "Unauthorized") => new(401, new { error = message });
         protected ActionResult StatusCode(int code, object? value = null) => new(code, value);
+
+        protected ContentResult Content(string content, string contentType = "text/plain", Encoding? encoding = null)
+        {
+            return new ContentResult(content, contentType, encoding ?? Encoding.UTF8);
+        }
 
         protected FileActionResult File(Stream fileStream, string contentType, string fileName)
         {
@@ -27,5 +35,4 @@
             return new FileActionResult(bytes, contentType, fileName);
         }
     }
-
 }

@@ -453,6 +453,66 @@ namespace AvalonFlow.Websocket
             }
         }
 
+        // Verificar grupo y obtener cantidad de clientes CONECTADOS
+        public int VerifyToGroup(string groupId)
+        {
+            try
+            {
+                // Validar entrada
+                if (string.IsNullOrEmpty(groupId))
+                    return 0;
+
+                // Obtener lista de clientes en el grupo
+                if (_groups.TryGetValue(groupId, out var clientList))
+                {
+                    // Lista para almacenar clientes a remover
+                    var clientsToRemove = new List<SocketWebServer>();
+                    int connectedCount = 0;
+
+                    // Verificar estado de conexión de cada cliente
+                    foreach (var client in clientList)
+                    {
+                        if (client.IsConnected)
+                        {
+                            connectedCount++;
+                        }
+                        else
+                        {
+                            clientsToRemove.Add(client);
+                        }
+                    }
+
+                    // Eliminar clientes desconectados
+                    if (clientsToRemove.Count > 0)
+                    {
+                        lock (clientList) // Bloqueo para seguridad en hilos
+                        {
+                            foreach (var client in clientsToRemove)
+                            {
+                                clientList.Remove(client);
+                            }
+                        }
+
+                        // Si el grupo quedó vacío, removerlo completamente
+                        if (clientList.Count == 0)
+                        {
+                            _groups.TryRemove(groupId, out _);
+                        }
+                    }
+
+                    return connectedCount;
+                }
+
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                AvalonFlowInstance.Log($"Error verifying group {groupId}: {ex.Message}");
+                return 0;
+            }
+        }
+
+
         // Métodos de utilidad
         public int GetConnectedClientsCount() => _clients.Count;
 

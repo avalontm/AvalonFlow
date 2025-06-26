@@ -5,7 +5,6 @@ using System.Reflection;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
-using System.Web;
 
 namespace AvalonFlow.Rest
 {
@@ -18,16 +17,16 @@ namespace AvalonFlow.Rest
         private readonly string _corsAllowedMethods;
         private readonly string _corsAllowedHeaders;
         private int _port;
-        private int _maxBodySize = 10;
-
+        // Aumentar el tamaño máximo por defecto a 10MB
+        private int _maxBodySize = 10; // MB
 
         public int MaxBodySize
         {
-            get { return _maxBodySize; }
-            set { _maxBodySize = value; }
+            get => _maxBodySize;
+            set => _maxBodySize = value > 0 ? value : 5; // Mínimo 5MB
         }
 
-        public AvalonRestServer(int port = 5000, bool useHttps = false, string corsAllowedOrigins = "*", string corsAllowedMethods = "GET, POST, PUT, DELETE, OPTIONS", string corsAllowedHeaders = "Content-Type, Authorization")
+        public AvalonRestServer(int port = 5000, bool useHttps = false, string corsAllowedOrigins = "*", string corsAllowedMethods = "GET, POST, PUT, DELETE, OPTIONS", string corsAllowedHeaders = "Content-Type, Authorization", int maxBodySizeMB = 10)
         {
             _corsAllowedOrigins = corsAllowedOrigins;
             _corsAllowedMethods = corsAllowedMethods;
@@ -35,12 +34,16 @@ namespace AvalonFlow.Rest
 
             try
             {
+                _maxBodySize = maxBodySizeMB;
                 _port = port;
                 _listener = new HttpListener();
                 string scheme = useHttps ? "https" : "http";
 
                 // Usar * para escuchar en todas las interfaces (equivalente a 0.0.0.0)
                 _listener.Prefixes.Add($"{scheme}://*:{port}/");
+
+                // Configurar límites del HttpListener
+                ConfigureHttpListener();
 
                 RegisterControllersInAllAssemblies();
             }
@@ -50,6 +53,26 @@ namespace AvalonFlow.Rest
                 throw;
             }
         }
+
+        private void ConfigureHttpListener()
+        {
+            try
+            {
+                // Configurar el tamaño máximo de datos de entrada
+                // HttpListener no tiene una propiedad directa para esto, pero podemos configurar el timeout
+                _listener.TimeoutManager.IdleConnection = TimeSpan.FromMinutes(10);
+                _listener.TimeoutManager.RequestQueue = TimeSpan.FromMinutes(10);
+                _listener.TimeoutManager.HeaderWait = TimeSpan.FromMinutes(5);
+                _listener.TimeoutManager.MinSendBytesPerSecond = 512; // 1KB/s mínimo
+
+                AvalonFlowInstance.Log($"HTTP Listener configured with MaxBodySize: {_maxBodySize}MB");
+            }
+            catch (Exception ex)
+            {
+                AvalonFlowInstance.Log($"Warning: Could not configure HttpListener timeouts: {ex.Message}");
+            }
+        }
+
 
         private void LogServerAddresses()
         {
@@ -204,7 +227,7 @@ namespace AvalonFlow.Rest
         {
             var startTime = DateTime.UtcNow;
             try
-            { 
+            {
                 // Obtener IP del cliente
                 var clientIp = context.Request.RemoteEndPoint?.Address?.ToString() ?? "unknown";
 
@@ -217,6 +240,27 @@ namespace AvalonFlow.Rest
 
                 var request = context.Request;
                 var response = context.Response;
+
+                // Verificar el tamaño del contenido antes de procesarlo
+                if (request.HasEntityBody && request.ContentLength64 > 0)
+                {
+                    long maxBytesAllowed = (long)_maxBodySize * 1024 * 1024;
+
+                    // Mejor respuesta de error
+                    if (request.ContentLength64 > maxBytesAllowed)
+                    {
+                        var errorResponse = new
+                        {
+                            error = "Request entity too large",
+                            maxAllowedSizeMB = _maxBodySize,
+                            receivedSizeMB = request.ContentLength64 / (1024.0 * 1024.0),
+                            suggestion = $"Split your request into smaller chunks or contact support to increase the limit"
+                        };
+
+                        await RespondWith(context, 413, errorResponse);
+                        return;
+                    }
+                }
 
                 if (request.HttpMethod.Equals("OPTIONS", StringComparison.OrdinalIgnoreCase))
                 {
@@ -388,7 +432,7 @@ namespace AvalonFlow.Rest
                 try
                 {
                     object[] parameters = await ResolveParameters(matchedMethod, context, routeParams);
- 
+
                     var result = matchedMethod.Invoke(controllerInstance, parameters);
 
                     if (result is Task task)
@@ -399,6 +443,12 @@ namespace AvalonFlow.Rest
                         result = task.GetType().IsGenericType
                             ? task.GetType().GetProperty("Result")?.GetValue(task)
                             : null;
+                    }
+
+                    if (result is ContentResult contentResult)
+                    {
+                        await RespondWith(context, contentResult.StatusCode, contentResult); // Pasar el objeto completo
+                        return;
                     }
 
                     if (result is ActionResult actionResult)
@@ -503,13 +553,6 @@ namespace AvalonFlow.Rest
 
         private async Task<object[]> ResolveParameters(MethodInfo method, HttpListenerContext context, Dictionary<string, string> routeParams)
         {
-            int maxBodySize = _maxBodySize * 1024 * 1024;
-
-            if (context.Request.ContentLength64 > maxBodySize)
-            {
-                throw new InvalidOperationException($"Request body too large. Maximum allowed is {maxBodySize} bytes.");
-            }
-
             var parameters = method.GetParameters();
             var resolved = new List<object>();
 
@@ -524,9 +567,39 @@ namespace AvalonFlow.Rest
             {
                 try
                 {
-                    // Leer el cuerpo completo primero
+                    // Verificación adicional del tamaño durante la lectura
+                    long maxBytesAllowed = (long)_maxBodySize * 1024 * 1024;
+
+                    // Leer el cuerpo de forma controlada
                     using var reader = new StreamReader(context.Request.InputStream);
-                    body = await reader.ReadToEndAsync();
+                    var buffer = new char[65536]; // 64KB buffer (aumentado de 8KB)
+                    var stringBuilder = new StringBuilder();
+                    int totalBytesRead = 0;
+                    int bytesRead;
+
+                    while ((bytesRead = await reader.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                    {
+                        totalBytesRead += Encoding.UTF8.GetByteCount(buffer, 0, bytesRead);
+
+                        if (totalBytesRead > maxBytesAllowed)
+                        {
+                            throw new InvalidOperationException($"Request body exceeds maximum allowed size of {_maxBodySize}MB");
+                        }
+
+                        stringBuilder.Append(buffer, 0, bytesRead);
+
+                        // Log de progreso para requests grandes
+                        if (totalBytesRead > 10 * 1024 * 1024) // > 10MB
+                        {
+                            var progressMB = totalBytesRead / (1024.0 * 1024.0);
+                            if ((int)progressMB % 50 == 0) // Log cada 50MB
+                            {
+                                AvalonFlowInstance.Log($"Reading request body progress: {progressMB:F1}MB");
+                            }
+                        }
+                    }
+
+                    body = stringBuilder.ToString();
 
                     string contentType = context.Request.ContentType ?? "";
 
@@ -534,7 +607,7 @@ namespace AvalonFlow.Rest
                     isJsonRequest = contentType.Contains("application/json", StringComparison.OrdinalIgnoreCase) ||
                                    parameters.Any(p => p.GetCustomAttribute<FromBodyAttribute>() != null);
 
- 
+
                     if (isJsonRequest && !string.IsNullOrWhiteSpace(body))
                     {
                         try
@@ -571,6 +644,11 @@ namespace AvalonFlow.Rest
                             }
                         }
                     }
+                }
+                catch (InvalidOperationException)
+                {
+                    // Re-lanzar excepciones de tamaño
+                    throw;
                 }
                 catch (Exception ex)
                 {
@@ -957,63 +1035,175 @@ namespace AvalonFlow.Rest
 
         private async Task RespondWith(HttpListenerContext context, int statusCode, object value)
         {
-            AddSecurityHeaders(context.Response);
-
             var response = context.Response;
             response.StatusCode = statusCode;
-          
-            AddCorsHeaders(response);
 
             try
             {
-                if (value is FileActionResult file)
-                {
-                    context.Response.ContentType = file.ContentType ?? "application/octet-stream";
-                    context.Response.AddHeader("Content-Disposition", $"attachment; filename=\"{file.FileName}\"");
-                    await context.Response.OutputStream.WriteAsync(file.Content, 0, file.Content.Length);
-                }
-                else if (value is StreamFileActionResult streamfile)
-                {
-                    context.Response.ContentType = streamfile.ContentType;
+                // Configuración común de headers
+                AddSecurityHeaders(response);
+                AddCorsHeaders(response);
 
-                    if (!string.IsNullOrEmpty(streamfile.FileName))
-                    {
-                        var dispositionType = streamfile.IsAttachment ? "attachment" : "inline";
-                        context.Response.AddHeader("Content-Disposition", $"{dispositionType}; filename=\"{streamfile.FileName}\"");
-                    }
-
-                    byte[] buffer = new byte[81920]; // 80 KB buffer
-                    int bytesRead;
-                    while ((bytesRead = await streamfile.ContentStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
-                    {
-                        await context.Response.OutputStream.WriteAsync(buffer, 0, bytesRead);
-                        await context.Response.OutputStream.FlushAsync();
-                    }
-                    streamfile.ContentStream.Close();
-                }
-                else
+                // Manejo especial para ContentResult
+                if (value is ContentResult contentResult)
                 {
-                    context.Response.ContentType = "application/json";
-                    var responseJson = JsonSerializer.Serialize(value);
-                    var buffer = Encoding.UTF8.GetBytes(responseJson);
-                    await context.Response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
+                    response.ContentType = contentResult.ContentType;
+                    byte[] buffer = contentResult.ContentEncoding.GetBytes(contentResult.Content);
+                    await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
+                    return;
+                }
+
+                // Si es ActionResult, extraer el Value
+                if (value is ActionResult actionResult)
+                {
+                    value = actionResult.Value;
+                }
+
+                // Manejo para otros tipos de respuesta
+                switch (value)
+                {
+                    case FileActionResult file:
+                        await HandleFileResponse(response, file);
+                        break;
+
+                    case Stream stream:
+                        await HandleGenericStreamResponse(response, stream);
+                        break;
+
+                    case string str when !response.ContentType.StartsWith("application/json"):
+                        response.ContentType = "text/plain";
+                        byte[] strBuffer = Encoding.UTF8.GetBytes(str);
+                        await response.OutputStream.WriteAsync(strBuffer, 0, strBuffer.Length);
+                        break;
+
+                    default:
+                        if (value != null)
+                        {
+                            await HandleJsonResponse(response, value);
+                        }
+                        else
+                        {
+                            response.ContentLength64 = 0;
+                        }
+                        break;
                 }
             }
             catch (Exception ex)
             {
                 AvalonFlowInstance.Log($"Error writing response: {ex.Message}");
+                try
+                {
+                    response.StatusCode = 500;
+                    var error = new { error = "Internal server error", details = ex.Message };
+                    await HandleJsonResponse(response, error);
+                }
+                catch
+                {
+                    // Si falla el envío del error, simplemente cerramos
+                }
             }
             finally
             {
                 try
                 {
-                    context.Response.Close();
+                    if (response.OutputStream.CanWrite)
+                    {
+                        await response.OutputStream.FlushAsync();
+                    }
+                    response.Close();
                 }
                 catch
                 {
-                    // Ignorar errores al cerrar la respuesta
+                    // Ignorar errores al cerrar
                 }
             }
+        }
+
+        private async Task HandleFileResponse(HttpListenerResponse response, FileActionResult file)
+        {
+            response.ContentType = file.ContentType ?? "application/octet-stream";
+            response.AddHeader("Content-Disposition", $"attachment; filename=\"{file.FileName}\"");
+            response.ContentLength64 = file.Content.Length;
+
+            await response.OutputStream.WriteAsync(file.Content, 0, file.Content.Length);
+        }
+
+        private async Task HandleStreamFileResponse(HttpListenerResponse response, StreamFileActionResult streamFile)
+        {
+            response.ContentType = streamFile.ContentType ?? "application/octet-stream";
+
+            if (!string.IsNullOrEmpty(streamFile.FileName))
+            {
+                var dispositionType = streamFile.IsAttachment ? "attachment" : "inline";
+                response.AddHeader("Content-Disposition",
+                    $"{dispositionType}; filename=\"{streamFile.FileName}\"");
+            }
+
+            try
+            {
+                byte[] buffer = new byte[81920]; // 80 KB buffer
+                int bytesRead;
+                long totalBytes = 0;
+
+                while ((bytesRead = await streamFile.ContentStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                {
+                    await response.OutputStream.WriteAsync(buffer, 0, bytesRead);
+                    totalBytes += bytesRead;
+
+                    // Actualizar el ContentLength64 si no estaba establecido
+                    if (response.ContentLength64 == 0)
+                    {
+                        try
+                        {
+                            response.ContentLength64 = streamFile.ContentStream.Length;
+                        }
+                        catch
+                        {
+                            // Algunos streams no soportan Length
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                streamFile.ContentStream.Close();
+            }
+        }
+
+        private async Task HandleGenericStreamResponse(HttpListenerResponse response, Stream stream)
+        {
+            response.ContentType = "application/octet-stream";
+
+            try
+            {
+                byte[] buffer = new byte[81920];
+                int bytesRead;
+
+                while ((bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                {
+                    await response.OutputStream.WriteAsync(buffer, 0, bytesRead);
+                }
+            }
+            finally
+            {
+                stream.Close();
+            }
+        }
+
+        private async Task HandleJsonResponse(HttpListenerResponse response, object value)
+        {
+            response.ContentType = "application/json; charset=utf-8";
+
+            var responseJson = JsonSerializer.Serialize(value, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                WriteIndented = false
+            });
+
+            var buffer = Encoding.UTF8.GetBytes(responseJson);
+            response.ContentLength64 = buffer.Length;
+
+            await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
         }
 
         private void LogRequest(HttpListenerRequest request, HttpListenerResponse response, TimeSpan duration)
