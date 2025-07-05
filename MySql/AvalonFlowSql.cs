@@ -26,7 +26,7 @@ namespace AvalonFlow.MySql
             if (string.IsNullOrEmpty(server) || string.IsNullOrEmpty(user))
                 throw new InvalidOperationException("Las propiedades estáticas server, user y password deben estar definidas antes de usar este constructor.");
 
-            _connectionString = $"Server={server};Port={port};Database={database};User ID={user};Password={password};SslMode={sslmode};Convert Zero Datetime=True;UseCompression=True;CharSet=utf8";
+            _connectionString = $"Server={server};Port={port};Database={database};User ID={user};Password={password};SslMode={sslmode};Convert Zero Datetime=True;UseCompression=True;CharSet=utf8mb4";
             _connection = new MySqlConnection(_connectionString);
             _connection.Open();
         }

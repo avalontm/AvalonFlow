@@ -1,4 +1,5 @@
-﻿using System.Net;
+﻿using System.Diagnostics;
+using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Reflection;
@@ -572,7 +573,7 @@ namespace AvalonFlow.Rest
 
                     // Leer el cuerpo de forma controlada
                     using var reader = new StreamReader(context.Request.InputStream);
-                    var buffer = new char[65536]; // 64KB buffer (aumentado de 8KB)
+                    var buffer = new char[65536]; // 64KB buffer
                     var stringBuilder = new StringBuilder();
                     int totalBytesRead = 0;
                     int bytesRead;
@@ -602,11 +603,10 @@ namespace AvalonFlow.Rest
                     body = stringBuilder.ToString();
 
                     string contentType = context.Request.ContentType ?? "";
-
+ 
                     // Determinar si es una solicitud JSON
                     isJsonRequest = contentType.Contains("application/json", StringComparison.OrdinalIgnoreCase) ||
                                    parameters.Any(p => p.GetCustomAttribute<FromBodyAttribute>() != null);
-
 
                     if (isJsonRequest && !string.IsNullOrWhiteSpace(body))
                     {
@@ -623,19 +623,25 @@ namespace AvalonFlow.Rest
                     else if (!isJsonRequest && !string.IsNullOrWhiteSpace(body))
                     {
                         // Procesar form data solo si no es JSON
-                        bool hasFromFormParam = parameters.Any(p => p.GetCustomAttribute<FromFormAttribute>() != null);
+                        bool hasFormParam = parameters.Any(p =>
+                            p.GetCustomAttribute<FromFormAttribute>() != null ||
+                            p.GetCustomAttribute<FromFileAttribute>() != null);
 
-                        if (hasFromFormParam)
+                        if (hasFormParam)
                         {
                             if (contentType.Contains("multipart/form-data", StringComparison.OrdinalIgnoreCase))
                             {
                                 // Para multipart, necesitamos recrear el stream
-                                using var bodyStream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(body));
+                                using var bodyStream = new MemoryStream(Encoding.UTF8.GetBytes(body));
                                 multipartData = await MultipartFormDataParser.ParseAsync(bodyStream, contentType);
                                 formData = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
                                 foreach (var field in multipartData.Values)
                                 {
-                                    formData[field.Name] = field.IsFile ? field.FileName ?? "" : field.Value;
+                                    if (!field.IsFile) // Solo campos de formulario normales
+                                    {
+                                        formData[field.Name] = field.Value;
+                                    }
                                 }
                             }
                             else if (contentType.Contains("application/x-www-form-urlencoded", StringComparison.OrdinalIgnoreCase))
@@ -657,273 +663,22 @@ namespace AvalonFlow.Rest
                 }
             }
 
+            // Procesar cada parámetro del método
             foreach (var param in parameters)
             {
                 try
                 {
-                    var fromBody = param.GetCustomAttribute<FromBodyAttribute>() != null;
-                    var fromHeader = param.GetCustomAttribute<FromHeaderAttribute>();
-                    var fromQuery = param.GetCustomAttribute<FromQueryAttribute>();
-                    var fromForm = param.GetCustomAttribute<FromFormAttribute>();
-                    var fromFile = param.GetCustomAttribute<FromFileAttribute>();
+                    object? resolvedValue = ResolveParameter(param, context, routeParams,
+                        new ParameterResolutionContext
+                        {
+                            Body = body,
+                            FormData = formData,
+                            MultipartData = multipartData,
+                            JsonDoc = jsonDoc,
+                            IsJsonRequest = isJsonRequest
+                        });
 
-                    if (fromFile != null && multipartData != null)
-                    {
-                        // Manejar parámetros FromFile (archivos subidos)
-                        string fileName = fromFile.Name ?? param.Name!;
-
-                        if (multipartData.TryGetValue(fileName, out var fileField) && fileField.IsFile)
-                        {
-                            if (param.ParameterType == typeof(MultipartFormDataParser.FormField))
-                            {
-                                resolved.Add(fileField);
-                            }
-                            else if (param.ParameterType == typeof(byte[]))
-                            {
-                                resolved.Add(fileField.FileData ?? Array.Empty<byte>());
-                            }
-                            else if (param.ParameterType == typeof(string))
-                            {
-                                resolved.Add(fileField.FileName ?? "");
-                            }
-                            else if (param.ParameterType.IsClass && param.ParameterType != typeof(string))
-                            {
-                                var instance = Activator.CreateInstance(param.ParameterType);
-                                var properties = param.ParameterType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
-
-                                foreach (var property in properties)
-                                {
-                                    if (property.CanWrite)
-                                    {
-                                        switch (property.Name.ToLowerInvariant())
-                                        {
-                                            case "filename":
-                                                property.SetValue(instance, fileField.FileName);
-                                                break;
-                                            case "contenttype":
-                                                property.SetValue(instance, fileField.ContentType);
-                                                break;
-                                            case "data":
-                                            case "content":
-                                            case "filedata":
-                                                if (property.PropertyType == typeof(byte[]))
-                                                    property.SetValue(instance, fileField.FileData);
-                                                break;
-                                            case "size":
-                                            case "length":
-                                                if (property.PropertyType == typeof(int) || property.PropertyType == typeof(long))
-                                                    property.SetValue(instance, Convert.ChangeType(fileField.FileData?.Length ?? 0, property.PropertyType));
-                                                break;
-                                        }
-                                    }
-                                }
-                                resolved.Add(instance);
-                            }
-                            else
-                            {
-                                resolved.Add(fileField);
-                            }
-                        }
-                        else
-                        {
-                            resolved.Add(param.HasDefaultValue ? param.DefaultValue : null);
-                        }
-                    }
-                    else if (fromForm != null && !isJsonRequest)
-                    {
-                        // Manejar parámetros FromForm (solo si no es JSON)
-                        if (formData == null && multipartData == null)
-                        {
-                            resolved.Add(param.HasDefaultValue ? param.DefaultValue :
-                                        param.ParameterType.IsClass && param.ParameterType != typeof(string) ?
-                                        Activator.CreateInstance(param.ParameterType) : null);
-                            continue;
-                        }
-
-                        if (param.ParameterType.IsClass && param.ParameterType != typeof(string))
-                        {
-                            var instance = Activator.CreateInstance(param.ParameterType);
-                            var properties = param.ParameterType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
-
-                            foreach (var property in properties)
-                            {
-                                if (property.CanWrite)
-                                {
-                                    string formKey = !string.IsNullOrEmpty(fromForm.Name) ?
-                                                  $"{fromForm.Name}.{property.Name}" : property.Name;
-
-                                    object? formValue = multipartData?.Values
-                                        .FirstOrDefault(f => string.Equals(f.Name, formKey, StringComparison.OrdinalIgnoreCase))?
-                                        .Value;
-
-                                    formValue ??= formData?.FirstOrDefault(f =>
-                                        string.Equals(f.Key, formKey, StringComparison.OrdinalIgnoreCase)).Value;
-
-                                    if (formValue != null)
-                                    {
-                                        try
-                                        {
-                                            Type targetType = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
-                                            object? convertedValue = ConvertValue(formValue.ToString(), targetType);
-                                            property.SetValue(instance, convertedValue);
-                                        }
-                                        catch (Exception ex)
-                                        {
-                                            AvalonFlowInstance.Log($"Error converting form field '{formKey}': {ex.Message}");
-                                        }
-                                    }
-                                }
-                            }
-                            resolved.Add(instance);
-                        }
-                        else
-                        {
-                            string formKey = fromForm.Name ?? param.Name!;
-                            string? formValue = multipartData?.Values
-                                .FirstOrDefault(f => string.Equals(f.Name, formKey, StringComparison.OrdinalIgnoreCase))?
-                                .Value;
-
-                            formValue ??= formData?.FirstOrDefault(f =>
-                                string.Equals(f.Key, formKey, StringComparison.OrdinalIgnoreCase)).Value;
-
-                            if (!string.IsNullOrEmpty(formValue))
-                            {
-                                try
-                                {
-                                    resolved.Add(Convert.ChangeType(formValue, param.ParameterType));
-                                }
-                                catch (Exception ex)
-                                {
-                                    throw new InvalidOperationException(
-                                        $"Cannot convert form field '{formKey}' value '{formValue}' to type '{param.ParameterType.Name}': {ex.Message}");
-                                }
-                            }
-                            else
-                            {
-                                resolved.Add(param.HasDefaultValue ? param.DefaultValue : null);
-                            }
-                        }
-                    }
-                    else if (fromBody)
-                    {
-                        if (jsonDoc == null)
-                        {
-                            // Si no hay JSON document pero se esperaba FromBody, verificar si hay body string
-                            if (!string.IsNullOrWhiteSpace(body))
-                            {
-                                AvalonFlowInstance.Log($"FromBody parameter but no valid JSON. Body content: {body}");
-                                throw new InvalidOperationException($"FromBody parameter '{param.Name}' requires valid JSON content");
-                            }
-                            resolved.Add(param.HasDefaultValue ? param.DefaultValue : null);
-                            continue;
-                        }
-
-                        if (param.ParameterType == typeof(JsonElement))
-                        {
-                            resolved.Add(jsonDoc.RootElement.Clone());
-                        }
-                        else if (param.ParameterType == typeof(JsonDocument))
-                        {
-                            resolved.Add(jsonDoc);
-                        }
-                        else
-                        {
-                            try
-                            {
-                                var deserialized = JsonSerializer.Deserialize(
-                                    jsonDoc.RootElement.GetRawText(),
-                                    param.ParameterType,
-                                    new JsonSerializerOptions
-                                    {
-                                        PropertyNameCaseInsensitive = true,
-                                        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-                                    }
-                                );
-
-                                resolved.Add(deserialized ?? throw new InvalidOperationException(
-                                    "Invalid JSON format: could not deserialize the object."));
-                            }
-                            catch (JsonException ex)
-                            {
-                                AvalonFlowInstance.Log($"JSON deserialization error for parameter '{param.Name}': {ex.Message}. JSON content: {jsonDoc.RootElement.GetRawText()}");
-                                throw new InvalidOperationException(
-                                    $"Invalid JSON format for parameter '{param.Name}': {ex.Message}");
-                            }
-                        }
-                    }
-                    else if (fromHeader != null)
-                    {
-                        string headerName = fromHeader.Name ?? param.Name!;
-                        string? headerValue = GetHeaderValue(context.Request, headerName);
-
-                        if (string.IsNullOrWhiteSpace(headerValue))
-                        {
-                            if (param.HasDefaultValue)
-                            {
-                                resolved.Add(param.DefaultValue);
-                            }
-                            else
-                            {
-                                throw new InvalidOperationException($"Missing required header: '{headerName}'");
-                            }
-                        }
-                        else
-                        {
-                            try
-                            {
-                                resolved.Add(Convert.ChangeType(headerValue, param.ParameterType));
-                            }
-                            catch (Exception ex)
-                            {
-                                throw new InvalidOperationException(
-                                    $"Cannot convert header '{headerName}' value '{headerValue}' to type '{param.ParameterType.Name}': {ex.Message}");
-                            }
-                        }
-                    }
-                    else if (fromQuery != null)
-                    {
-                        string queryName = fromQuery.Name ?? param.Name!;
-                        string? queryValue = context.Request.QueryString[queryName];
-
-                        if (string.IsNullOrWhiteSpace(queryValue))
-                        {
-                            resolved.Add(param.HasDefaultValue ? param.DefaultValue :
-                                        param.ParameterType.IsValueType ?
-                                        Activator.CreateInstance(param.ParameterType) : null);
-                        }
-                        else
-                        {
-                            try
-                            {
-                                resolved.Add(Convert.ChangeType(queryValue, param.ParameterType));
-                            }
-                            catch (Exception ex)
-                            {
-                                throw new InvalidOperationException(
-                                    $"Cannot convert query parameter '{queryName}' value '{queryValue}' to type '{param.ParameterType.Name}': {ex.Message}");
-                            }
-                        }
-                    }
-                    else if (param.ParameterType == typeof(HttpListenerContext))
-                    {
-                        resolved.Add(context);
-                    }
-                    else if (routeParams.TryGetValue(param.Name!.ToLowerInvariant(), out var value))
-                    {
-                        try
-                        {
-                            resolved.Add(Convert.ChangeType(value, param.ParameterType));
-                        }
-                        catch (Exception ex)
-                        {
-                            throw new InvalidOperationException(
-                                $"Cannot convert route parameter '{param.Name}' value '{value}' to type '{param.ParameterType.Name}': {ex.Message}");
-                        }
-                    }
-                    else
-                    {
-                        resolved.Add(param.HasDefaultValue ? param.DefaultValue : null);
-                    }
+                    resolved.Add(resolvedValue);
                 }
                 catch (Exception ex)
                 {
@@ -935,28 +690,360 @@ namespace AvalonFlow.Rest
             return resolved.ToArray();
         }
 
-        // Método auxiliar para parsing de datos URL encoded
-        private Dictionary<string, string> ParseUrlEncodedData(string body)
+        private object? ResolveParameter(ParameterInfo param, HttpListenerContext context,
+            Dictionary<string, string> routeParams, ParameterResolutionContext ctx)
+        {
+            var fromBody = param.GetCustomAttribute<FromBodyAttribute>() != null;
+            var fromHeader = param.GetCustomAttribute<FromHeaderAttribute>();
+            var fromQuery = param.GetCustomAttribute<FromQueryAttribute>();
+            var fromForm = param.GetCustomAttribute<FromFormAttribute>();
+            var fromFile = param.GetCustomAttribute<FromFileAttribute>();
+
+            // 1. FromFile - Manejo de archivos
+            if (fromFile != null && ctx.MultipartData != null)
+            {
+                return ResolveFileParameter(param, fromFile, ctx.MultipartData);
+            }
+
+            // 2. FromForm - Campos de formulario
+            if (fromForm != null && !ctx.IsJsonRequest && (ctx.FormData != null || ctx.MultipartData != null))
+            {
+                return ResolveFormParameter(param, fromForm, ctx.FormData, ctx.MultipartData);
+            }
+
+            // 3. FromBody - JSON
+            if (fromBody)
+            {
+                return ResolveBodyParameter(param, ctx.JsonDoc, ctx.Body);
+            }
+
+            // 4. FromHeader - Encabezados
+            if (fromHeader != null)
+            {
+                return ResolveHeaderParameter(param, fromHeader, context.Request);
+            }
+
+            // 5. FromQuery - Parámetros de consulta
+            if (fromQuery != null)
+            {
+                return ResolveQueryParameter(param, fromQuery, context.Request);
+            }
+
+            // 6. HttpListenerContext
+            if (param.ParameterType == typeof(HttpListenerContext))
+            {
+                return context;
+            }
+
+            // 7. Route parameters
+            if (routeParams.TryGetValue(param.Name!.ToLowerInvariant(), out var routeValue))
+            {
+                return Convert.ChangeType(routeValue, param.ParameterType);
+            }
+
+            // 8. Valor por defecto
+            return param.HasDefaultValue ? param.DefaultValue :
+                   param.ParameterType.IsValueType ? Activator.CreateInstance(param.ParameterType) : null;
+        }
+
+        private object? ResolveFileParameter(ParameterInfo param, FromFileAttribute fromFile,
+            Dictionary<string, MultipartFormDataParser.FormField> multipartData)
+        {
+            string fieldName = fromFile.Name ?? param.Name!;
+
+            if (!multipartData.TryGetValue(fieldName, out var fileField) || !fileField.IsFile)
+            {
+                return param.HasDefaultValue ? param.DefaultValue : null;
+            }
+
+            if (param.ParameterType == typeof(IFormFile))
+            {
+                var stream = fileField.FileData != null
+                    ? new MemoryStream(fileField.FileData)
+                    : new MemoryStream();
+                stream.Position = 0;
+
+                return new FormFile(
+                    stream: stream,
+                    name: fieldName,
+                    fileName: fileField.FileName ?? Path.GetRandomFileName(),
+                    contentType: fileField.ContentType ?? "application/octet-stream",
+                    length: fileField.FileData?.Length ?? 0
+                );
+            }
+
+            // Otros tipos soportados para archivos
+            if (param.ParameterType == typeof(MultipartFormDataParser.FormField))
+            {
+                return fileField;
+            }
+            else if (param.ParameterType == typeof(byte[]))
+            {
+                return fileField.FileData ?? Array.Empty<byte>();
+            }
+            else if (param.ParameterType == typeof(string))
+            {
+                return fileField.FileName ?? "";
+            }
+            else if (param.ParameterType.IsClass && param.ParameterType != typeof(string))
+            {
+                return CreateFileModel(param.ParameterType, fileField);
+            }
+
+            return fileField;
+        }
+
+        private object? ResolveFormParameter(ParameterInfo param, FromFormAttribute fromForm,
+            Dictionary<string, string> formData, Dictionary<string, MultipartFormDataParser.FormField> multipartData)
+        {
+            string fieldName = fromForm.Name ?? param.Name!;
+
+            // Buscar en formData (campos normales)
+            if (formData != null && formData.TryGetValue(fieldName, out var formValue))
+            {
+                return Convert.ChangeType(formValue, param.ParameterType);
+            }
+
+            // Buscar en multipartData (si no se encontró en formData)
+            if (multipartData != null && multipartData.TryGetValue(fieldName, out var multipartField))
+            {
+                if (!multipartField.IsFile) // Solo campos de formulario normales
+                {
+                    return Convert.ChangeType(multipartField.Value, param.ParameterType);
+                }
+            }
+
+            // Para objetos complejos
+            if (param.ParameterType.IsClass && param.ParameterType != typeof(string))
+            {
+                return CreateFormModel(param.ParameterType, fromForm, formData, multipartData);
+            }
+
+            return param.HasDefaultValue ? param.DefaultValue : null;
+        }
+
+        private object? ResolveBodyParameter(ParameterInfo param, JsonDocument jsonDoc, string body)
+        {
+            if (jsonDoc == null)
+            {
+                if (!string.IsNullOrWhiteSpace(body))
+                {
+                    AvalonFlowInstance.Log($"FromBody parameter but no valid JSON. Body content: {body}");
+                    throw new InvalidOperationException($"FromBody parameter '{param.Name}' requires valid JSON content");
+                }
+                return param.HasDefaultValue ? param.DefaultValue : null;
+            }
+
+            if (param.ParameterType == typeof(JsonElement))
+            {
+                return jsonDoc.RootElement.Clone();
+            }
+            else if (param.ParameterType == typeof(JsonDocument))
+            {
+                return jsonDoc;
+            }
+
+            try
+            {
+                return JsonSerializer.Deserialize(
+                    jsonDoc.RootElement.GetRawText(),
+                    param.ParameterType,
+                    new JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true,
+                        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+                    }
+                ) ?? (param.HasDefaultValue ? param.DefaultValue : null);
+            }
+            catch (JsonException ex)
+            {
+                throw new InvalidOperationException(
+                    $"Invalid JSON format for parameter '{param.Name}': {ex.Message}");
+            }
+        }
+
+        private object? ResolveHeaderParameter(ParameterInfo param, FromHeaderAttribute fromHeader, HttpListenerRequest request)
+        {
+            string headerName = fromHeader.Name ?? param.Name!;
+
+            // Lista de posibles variantes del nombre del header
+            var possibleHeaderNames = new List<string>
+            {
+                headerName, // Nombre original
+                headerName.Replace('_', '-'), // Reemplazar guiones bajos por guiones
+                headerName.Replace('-', '_')  // Reemplazar guiones por guiones bajos
+            }.Distinct(); // Eliminar duplicados si hay
+
+            string headerValue = null;
+
+            // Buscar el header en todas las variantes posibles
+            foreach (var name in possibleHeaderNames)
+            {
+                headerValue = request.Headers[name];
+                if (!string.IsNullOrEmpty(headerValue))
+                {
+                    break;
+                }
+            }
+
+            if (string.IsNullOrEmpty(headerValue))
+            {
+                if (param.HasDefaultValue)
+                    return param.DefaultValue;
+
+                throw new InvalidOperationException($"Missing required header. Tried: {string.Join(", ", possibleHeaderNames)}");
+            }
+
+            try
+            {
+                return Convert.ChangeType(headerValue, param.ParameterType);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    $"Cannot convert header value '{headerValue}' to type '{param.ParameterType.Name}': {ex.Message}");
+            }
+        }
+
+        private object? ResolveQueryParameter(ParameterInfo param, FromQueryAttribute fromQuery, HttpListenerRequest request)
+        {
+            string queryName = fromQuery.Name ?? param.Name!;
+
+            // Generar todas las posibles variantes del nombre del parámetro
+            var possibleParamNames = new List<string>
+            {
+                queryName, // Nombre original
+                queryName.Replace('_', '-'), // Reemplazar guiones bajos por guiones
+                queryName.Replace('-', '_')  // Reemplazar guiones por guiones bajos
+            }.Distinct().ToList(); // Eliminar duplicados
+
+            string queryValue = null;
+
+            // Buscar el parámetro en todas las variantes posibles
+            foreach (var name in possibleParamNames)
+            {
+                queryValue = request.QueryString[name];
+                if (!string.IsNullOrEmpty(queryValue))
+                {
+                    break;
+                }
+            }
+
+            if (string.IsNullOrEmpty(queryValue))
+            {
+                return param.HasDefaultValue ? param.DefaultValue :
+                       param.ParameterType.IsValueType ? Activator.CreateInstance(param.ParameterType) : null;
+            }
+
+            try
+            {
+                return Convert.ChangeType(queryValue, param.ParameterType);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    $"Cannot convert query parameter '{queryName}' value '{queryValue}' " +
+                    $"to type '{param.ParameterType.Name}'. Tried variants: {string.Join(", ", possibleParamNames)}. " +
+                    $"Error: {ex.Message}");
+            }
+        }
+
+        private object? CreateFileModel(Type modelType, MultipartFormDataParser.FormField fileField)
+        {
+            var instance = Activator.CreateInstance(modelType);
+            var properties = modelType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+
+            foreach (var property in properties)
+            {
+                if (!property.CanWrite) continue;
+
+                switch (property.Name.ToLowerInvariant())
+                {
+                    case "filename":
+                        property.SetValue(instance, fileField.FileName);
+                        break;
+                    case "contenttype":
+                        property.SetValue(instance, fileField.ContentType);
+                        break;
+                    case "data":
+                    case "content":
+                    case "filedata":
+                        if (property.PropertyType == typeof(byte[]))
+                            property.SetValue(instance, fileField.FileData);
+                        break;
+                    case "size":
+                    case "length":
+                        if (property.PropertyType == typeof(int) || property.PropertyType == typeof(long))
+                            property.SetValue(instance, Convert.ChangeType(fileField.FileData?.Length ?? 0, property.PropertyType));
+                        break;
+                }
+            }
+
+            return instance;
+        }
+
+        private object? CreateFormModel(Type modelType, FromFormAttribute fromForm,
+            Dictionary<string, string> formData, Dictionary<string, MultipartFormDataParser.FormField> multipartData)
+        {
+            var instance = Activator.CreateInstance(modelType);
+            var properties = modelType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+
+            foreach (var property in properties)
+            {
+                if (!property.CanWrite) continue;
+
+                string formKey = !string.IsNullOrEmpty(fromForm.Name)
+                    ? $"{fromForm.Name}.{property.Name}"
+                    : property.Name;
+
+                string formValue = null;
+
+                // Buscar en formData primero
+                if (formData != null && formData.TryGetValue(formKey, out var fdValue))
+                {
+                    formValue = fdValue;
+                }
+                // Buscar en multipartData si no se encontró
+                else if (multipartData != null && multipartData.TryGetValue(formKey, out var mpField) && !mpField.IsFile)
+                {
+                    formValue = mpField.Value;
+                }
+
+                if (formValue != null)
+                {
+                    try
+                    {
+                        Type targetType = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
+                        object convertedValue = Convert.ChangeType(formValue, targetType);
+                        property.SetValue(instance, convertedValue);
+                    }
+                    catch (Exception ex)
+                    {
+                        AvalonFlowInstance.Log($"Error converting form field '{formKey}': {ex.Message}");
+                    }
+                }
+            }
+
+            return instance;
+        }
+
+        private Dictionary<string, string> ParseUrlEncodedData(string formData)
         {
             var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var pairs = formData.Split('&');
 
-            if (string.IsNullOrWhiteSpace(body))
-                return result;
-
-            var pairs = body.Split('&');
             foreach (var pair in pairs)
             {
-                var keyValue = pair.Split('=', 2);
+                var keyValue = pair.Split('=');
                 if (keyValue.Length == 2)
                 {
-                    var key = Uri.UnescapeDataString(keyValue[0].Replace('+', ' '));
-                    var value = Uri.UnescapeDataString(keyValue[1].Replace('+', ' '));
-                    result[key] = value;
+                    result[Uri.UnescapeDataString(keyValue[0])] = Uri.UnescapeDataString(keyValue[1]);
                 }
             }
 
             return result;
         }
+
 
         // Método auxiliar para conversión de valores
         private object? ConvertValue(string value, Type targetType)
