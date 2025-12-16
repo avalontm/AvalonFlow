@@ -1,5 +1,4 @@
-﻿using System.Diagnostics;
-using System.Net;
+﻿using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Reflection;
@@ -20,6 +19,7 @@ namespace AvalonFlow.Rest
         private int _port;
         // Aumentar el tamaño máximo por defecto a 10MB
         private int _maxBodySize = 10; // MB
+        private bool _relaxedCspForDocs = true; // Control CSP para documentación
 
         public int MaxBodySize
         {
@@ -229,10 +229,8 @@ namespace AvalonFlow.Rest
             var startTime = DateTime.UtcNow;
             try
             {
-                // Obtener IP del cliente
                 var clientIp = context.Request.RemoteEndPoint?.Address?.ToString() ?? "unknown";
 
-                // Verificar rate limiting
                 if (!_rateLimiter.IsAllowed(clientIp))
                 {
                     await RespondWith(context, 429, new { error = "Too many requests. Please try again later." });
@@ -242,12 +240,10 @@ namespace AvalonFlow.Rest
                 var request = context.Request;
                 var response = context.Response;
 
-                // Verificar el tamaño del contenido antes de procesarlo
                 if (request.HasEntityBody && request.ContentLength64 > 0)
                 {
                     long maxBytesAllowed = (long)_maxBodySize * 1024 * 1024;
 
-                    // Mejor respuesta de error
                     if (request.ContentLength64 > maxBytesAllowed)
                     {
                         var errorResponse = new
@@ -272,36 +268,65 @@ namespace AvalonFlow.Rest
                 }
 
                 string method = context.Request.HttpMethod.ToUpperInvariant();
-                string[] segments = context.Request.Url.AbsolutePath.Trim('/').Split('/');
+                string requestPath = context.Request.Url.AbsolutePath.Trim('/').ToLowerInvariant();
+                string[] requestSegments = string.IsNullOrEmpty(requestPath)
+                    ? new string[0]
+                    : requestPath.Split('/');
 
-                // Mejorar la lógica de parsing de rutas para manejar múltiples "api" en la URL
-                int apiIndex = -1;
-                for (int i = 0; i < segments.Length; i++)
+                // Buscar coincidencia exacta de controlador
+                // Itera desde la ruta más larga posible hasta la más corta
+                Type controllerType = null;
+                string matchedControllerKey = null;
+                string subPath = "";
+
+                // Ordenar las rutas de controladores por longitud descendente para hacer match con las más específicas primero
+                var sortedControllers = _controllers
+                    .OrderByDescending(kvp => kvp.Key.Split('/').Length)
+                    .ThenByDescending(kvp => kvp.Key.Length);
+
+                foreach (var controllerEntry in sortedControllers)
                 {
-                    if (segments[i].Equals("api", StringComparison.OrdinalIgnoreCase))
+                    string controllerRoute = controllerEntry.Key; // ej: "v1/deliverypricing" o "v2/admin/deliverypricing"
+                    string[] controllerSegments = controllerRoute.Split('/');
+
+                    // Verificar si la ruta de la petición comienza con la ruta del controlador
+                    if (requestSegments.Length >= controllerSegments.Length)
                     {
-                        apiIndex = i;
-                        break;
+                        bool isMatch = true;
+
+                        for (int i = 0; i < controllerSegments.Length; i++)
+                        {
+                            if (!requestSegments[i].Equals(controllerSegments[i], StringComparison.OrdinalIgnoreCase))
+                            {
+                                isMatch = false;
+                                break;
+                            }
+                        }
+
+                        if (isMatch)
+                        {
+                            controllerType = controllerEntry.Value;
+                            matchedControllerKey = controllerRoute;
+
+                            // El subPath son los segmentos restantes después del controlador
+                            var remainingSegments = requestSegments.Skip(controllerSegments.Length);
+                            subPath = remainingSegments.Any()
+                                ? "/" + string.Join("/", remainingSegments)
+                                : "/";
+
+                            break;
+                        }
                     }
                 }
 
-                if (apiIndex == -1 || apiIndex + 1 >= segments.Length)
+                if (controllerType == null)
                 {
-                    await RespondWith(context, 404, new { error = "Invalid route - API endpoint not found" });
-                    return;
-                }
-
-                // Usar el primer "api" encontrado como base
-                string controllerName = segments[apiIndex + 1].ToLowerInvariant();
-                string controllerKey = $"api/{controllerName}";
-
-                // Construir subPath con los segmentos restantes después del controlador
-                var remainingSegments = segments.Skip(apiIndex + 2);
-                string subPath = "/" + string.Join("/", remainingSegments).ToLowerInvariant();
-
-                if (!_controllers.TryGetValue(controllerKey, out var controllerType))
-                {
-                    await RespondWith(context, 404, new { error = $"Controller not found: {controllerKey}" });
+                    await RespondWith(context, 404, new
+                    {
+                        error = "Controller not found",
+                        requestedPath = requestPath,
+                        availableRoutes = _controllers.Keys.ToArray()
+                    });
                     return;
                 }
 
@@ -327,7 +352,6 @@ namespace AvalonFlow.Rest
                     var templateParts = attr.Path.Trim('/').Split('/');
                     var requestParts = subPath.Trim('/').Split('/');
 
-                    // Si subPath está vacío, requestParts tendrá un elemento vacío
                     if (subPath.Trim('/') == string.Empty)
                     {
                         requestParts = new string[0];
@@ -367,11 +391,17 @@ namespace AvalonFlow.Rest
 
                 if (matchedMethod == null)
                 {
-                    await RespondWith(context, 404, new { error = "Route not found" });
+                    await RespondWith(context, 404, new
+                    {
+                        error = "Route not found",
+                        controller = matchedControllerKey,
+                        subPath = subPath,
+                        method = method
+                    });
                     return;
                 }
 
-                // Auth
+                // Auth (resto del código sin cambios)
                 var allowAnonymous = matchedMethod.GetCustomAttribute<AllowAnonymousAttribute>() != null;
                 var authorizeAttr = matchedMethod.GetCustomAttribute<AuthorizeAttribute>() ??
                                     controllerType.GetCustomAttribute<AuthorizeAttribute>();
@@ -381,13 +411,10 @@ namespace AvalonFlow.Rest
                 if (!allowAnonymous && authorizeAttr != null)
                 {
                     string? scheme = authorizeAttr.AuthenticationScheme?.Split(',').FirstOrDefault()?.Trim();
-
-                    // Por defecto, asumimos esquema "Bearer" si no se especifica ninguno
                     scheme ??= "Bearer";
 
                     if (!scheme.Equals("Bearer", StringComparison.OrdinalIgnoreCase))
                     {
-                        // Si el esquema no es "Bearer", se niega el acceso (podrías agregar otros esquemas aquí)
                         await RespondWith(context, 401, new { error = "Unauthorized: Unsupported authentication scheme" });
                         return;
                     }
@@ -413,7 +440,6 @@ namespace AvalonFlow.Rest
                         secured.HttpContext.User = userPrincipal;
                     }
 
-                    // Validar roles si están definidos
                     var rolesProperty = authorizeAttr.GetType().GetProperty("Roles");
                     var requiredRoles = rolesProperty?.GetValue(authorizeAttr) as string;
 
@@ -438,9 +464,7 @@ namespace AvalonFlow.Rest
 
                     if (result is Task task)
                     {
-                        await task; // Espera indefinida
-
-                        // Obtener resultado si es genérico
+                        await task;
                         result = task.GetType().IsGenericType
                             ? task.GetType().GetProperty("Result")?.GetValue(task)
                             : null;
@@ -448,15 +472,13 @@ namespace AvalonFlow.Rest
 
                     if (result is ContentResult contentResult)
                     {
-                        await RespondWith(context, contentResult.StatusCode, contentResult); // Pasar el objeto completo
+                        await RespondWith(context, contentResult.StatusCode, contentResult);
                         return;
                     }
 
                     if (result is ActionResult actionResult)
                     {
-                        // Extraer sólo la propiedad Value antes de devolver
                         var valueToReturn = actionResult.GetType().GetProperty("Value")?.GetValue(actionResult) ?? new { };
-
                         await RespondWith(context, actionResult.StatusCode, valueToReturn);
                     }
                     else
@@ -603,7 +625,7 @@ namespace AvalonFlow.Rest
                     body = stringBuilder.ToString();
 
                     string contentType = context.Request.ContentType ?? "";
- 
+
                     // Determinar si es una solicitud JSON
                     isJsonRequest = contentType.Contains("application/json", StringComparison.OrdinalIgnoreCase) ||
                                    parameters.Any(p => p.GetCustomAttribute<FromBodyAttribute>() != null);
@@ -1101,15 +1123,29 @@ namespace AvalonFlow.Rest
             return Convert.ChangeType(value, targetType);
         }
 
-        private void AddSecurityHeaders(HttpListenerResponse response)
+        private void AddSecurityHeaders(HttpListenerResponse response, bool isDocsEndpoint = false)
         {
             response.Headers.Add("X-Content-Type-Options", "nosniff");
             response.Headers.Add("X-Frame-Options", "DENY");
             response.Headers.Add("X-XSS-Protection", "1; mode=block");
             response.Headers.Add("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
-            response.Headers.Add("Content-Security-Policy", "default-src 'self'");
             response.Headers.Add("Referrer-Policy", "no-referrer");
             response.Headers.Add("Permissions-Policy", "geolocation=(), microphone=()");
+
+            if (isDocsEndpoint && _relaxedCspForDocs)
+            {
+                response.Headers.Add("Content-Security-Policy",
+                    "default-src 'self'; " +
+                    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.jsdelivr.net; " +
+                    "style-src 'self' 'unsafe-inline' https://unpkg.com https://cdn.jsdelivr.net; " +
+                    "img-src 'self' data: https: http:; " +
+                    "font-src 'self' data: https://unpkg.com; " +
+                    "connect-src 'self' https://unpkg.com http://localhost:5000;");
+            }
+            else
+            {
+                response.Headers.Add("Content-Security-Policy", "default-src 'self'");
+            }
         }
 
         private void AddCorsHeaders(HttpListenerResponse response)
@@ -1124,12 +1160,27 @@ namespace AvalonFlow.Rest
         {
             var response = context.Response;
             response.StatusCode = statusCode;
-
             try
             {
-                // Configuración común de headers
-                AddSecurityHeaders(response);
                 AddCorsHeaders(response);
+
+                // Detectar si es endpoint de documentación
+                string path = context.Request.Url?.AbsolutePath?.ToLowerInvariant() ?? "";
+                bool isDocsEndpoint = path.Contains("/docs") || path.Contains("/swagger");
+
+                if (!response.Headers.AllKeys.Any(k => k.Equals("Content-Security-Policy", StringComparison.OrdinalIgnoreCase)))
+                {
+                    AddSecurityHeaders(response, isDocsEndpoint);
+                }
+                else
+                {
+                    response.Headers.Add("X-Content-Type-Options", "nosniff");
+                    response.Headers.Add("X-Frame-Options", "DENY");
+                    response.Headers.Add("X-XSS-Protection", "1; mode=block");
+                    response.Headers.Add("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+                    response.Headers.Add("Referrer-Policy", "no-referrer");
+                    response.Headers.Add("Permissions-Policy", "geolocation=(), microphone=()");
+                }
 
                 // Manejo especial para ContentResult
                 if (value is ContentResult contentResult)
