@@ -512,6 +512,21 @@ namespace AvalonFlow.Websocket
             }
         }
 
+        // Verificar si un cliente específico está conectado por un identificador personalizado
+        public bool IsClientConnectedByCustomId(string UserId)
+        {
+            try
+            {
+                return _clients.Values.Any(client =>
+                    client.IsConnected &&
+                    client.UserId == UserId);
+            }
+            catch (Exception ex)
+            {
+                AvalonFlowInstance.Log($"Error checking client connection by custom ID: {ex.Message}");
+                return false;
+            }
+        }
 
         // Métodos de utilidad
         public int GetConnectedClientsCount() => _clients.Count;
