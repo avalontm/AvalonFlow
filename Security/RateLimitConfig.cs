@@ -1,11 +1,13 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace AvalonFlow.Security
 {
     public class RateLimitConfig
     {
-        public int DefaultMaxRequests { get; set; } = 100;
+        // CONFIGURACIÓN PARA PRODUCCIÓN - Escala Media
+        public int DefaultMaxRequests { get; set; } = 500;
         public TimeSpan DefaultTimeWindow { get; set; } = TimeSpan.FromMinutes(1);
         public int BlockDurationMinutes { get; set; } = 15;
         public int MaxViolationsBeforeBlock { get; set; } = 3;
@@ -23,58 +25,97 @@ namespace AvalonFlow.Security
         {
             EndpointLimits = new Dictionary<string, EndpointLimit>(StringComparer.OrdinalIgnoreCase)
             {
-                // Endpoints de autenticación (más restrictivos)
                 ["/api/auth/store"] = new EndpointLimit
                 {
-                    MaxRequests = 5,
+                    MaxRequests = 50,
                     TimeWindow = TimeSpan.FromMinutes(1),
-                    Description = "Login tienda"
+                    Description = "Login tienda - Previene fuerza bruta"
                 },
                 ["/api/auth/user"] = new EndpointLimit
                 {
-                    MaxRequests = 5,
+                    MaxRequests = 50,
                     TimeWindow = TimeSpan.FromMinutes(1),
-                    Description = "Login usuario"
+                    Description = "Login usuario - Previene fuerza bruta"
                 },
                 ["/api/auth/register-user"] = new EndpointLimit
                 {
-                    MaxRequests = 3,
+                    MaxRequests = 10,
                     TimeWindow = TimeSpan.FromMinutes(5),
-                    Description = "Registro usuario"
+                    Description = "Registro usuario - Previene spam"
                 },
                 ["/api/auth/register-store"] = new EndpointLimit
                 {
-                    MaxRequests = 3,
+                    MaxRequests = 10,
                     TimeWindow = TimeSpan.FromMinutes(5),
-                    Description = "Registro tienda"
+                    Description = "Registro tienda - Previene spam"
                 },
                 ["/api/auth/forgot-password"] = new EndpointLimit
                 {
-                    MaxRequests = 3,
+                    MaxRequests = 20,
                     TimeWindow = TimeSpan.FromMinutes(10),
-                    Description = "Recuperar contraseña"
+                    Description = "Recuperar contraseña - Previene abuso"
                 },
                 ["/api/auth/reset-password"] = new EndpointLimit
                 {
-                    MaxRequests = 5,
+                    MaxRequests = 20,
                     TimeWindow = TimeSpan.FromMinutes(10),
                     Description = "Reset contraseña"
                 },
 
-                // Endpoints de archivos (restrictivos por tamaño)
+                // ENDPOINTS DE ESCRITURA/MODIFICACIÓN (Moderadamente restrictivos)
                 ["/api/upload"] = new EndpointLimit
                 {
-                    MaxRequests = 10,
+                    MaxRequests = 50,
                     TimeWindow = TimeSpan.FromMinutes(1),
                     Description = "Subida de archivos"
                 },
-
-                // APIs generales (límite normal)
-                ["/api/"] = new EndpointLimit
+                ["/api/order"] = new EndpointLimit
                 {
                     MaxRequests = 100,
                     TimeWindow = TimeSpan.FromMinutes(1),
-                    Description = "API general"
+                    Description = "Creación de órdenes"
+                },
+                ["/api/payment"] = new EndpointLimit
+                {
+                    MaxRequests = 100,
+                    TimeWindow = TimeSpan.FromMinutes(1),
+                    Description = "Procesamiento de pagos"
+                },
+
+                // ENDPOINTS DE LECTURA PÚBLICA (Permisivos - Escala Media)
+                ["/api/store"] = new EndpointLimit
+                {
+                    MaxRequests = 1500, // 25 peticiones por segundo
+                    TimeWindow = TimeSpan.FromMinutes(1),
+                    Description = "Consulta de tiendas - Alto tráfico esperado"
+                },
+                ["/api/product"] = new EndpointLimit
+                {
+                    MaxRequests = 2000, // 33 peticiones por segundo
+                    TimeWindow = TimeSpan.FromMinutes(1),
+                    Description = "Consulta de productos - Alto tráfico esperado"
+                },
+                ["/api/category"] = new EndpointLimit
+                {
+                    MaxRequests = 1000,
+                    TimeWindow = TimeSpan.FromMinutes(1),
+                    Description = "Consulta de categorías"
+                },
+
+                // ENDPOINTS DE BÚSQUEDA (Moderados)
+                ["/api/search"] = new EndpointLimit
+                {
+                    MaxRequests = 200,
+                    TimeWindow = TimeSpan.FromMinutes(1),
+                    Description = "Búsquedas - Puede ser costoso en BD"
+                },
+
+                // API GENERAL (Límite base)
+                ["/api/"] = new EndpointLimit
+                {
+                    MaxRequests = 500, // 8.3 peticiones por segundo
+                    TimeWindow = TimeSpan.FromMinutes(1),
+                    Description = "API general - Catch-all para endpoints no especificados"
                 }
             };
         }
